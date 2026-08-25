@@ -19,10 +19,12 @@ scipy>=1.13.0         # fallback xarray engine; also used for interpolation
 pydap>=3.4.0          # pure-OPeNDAP backend for xarray.open_dataset
 siphon==0.9.0         # THREDDS catalog browsing
 
-# ── In-situ data ─────────────────────────────────────────────────────────────
-# argopy 1.4.0: Python >=3.11, incompatible with xarray 2024.3.0–2025.6.1
-argopy==1.4.0
-pandas<2.2.0          # Fix parse_time_string error in erddapy/argopy
+# argopy is an INGEST-ONLY dependency — not imported at runtime.
+# The ingest scripts use direct ERDDAP HTTP requests (urllib/requests) so
+# argopy is NOT installed in the container image — only install it in a
+# local venv when running the ingest scripts manually.
+# argopy==1.4.0   <-- DO NOT ADD: conflicts with xarray 2025.7.0 (requires xarray>=2025.7)
+# pandas pin removed: xarray 2025.7.0 requires pandas>=2.2; argo ingest no longer uses argopy
 
 # ── Scientific computing ──────────────────────────────────────────────────────
 numpy>=1.26.0,<2.0
@@ -52,9 +54,7 @@ sqlalchemy>=2.0.0
 shapely>=2.0.0        # geometry ops for bounding-box queries
 pyproj>=3.6.0         # coordinate transforms
 
-# ── Image generation (WMS hand-rolled — Option B only) ────────────────────────
-matplotlib>=3.9.0
-Pillow>=10.0.0
+# (Pillow already listed above in Scientific computing)
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 pyyaml>=6.0.1         # YAML manifest loader
