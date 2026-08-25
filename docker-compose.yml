@@ -53,8 +53,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mount data dir for local NetCDF cache (read-only in prod)
-      - ./data:/app/data:ro
+      # Mount data dir for local NetCDF cache
+      - ./data:/app/data
       # Mount registry so hot-reload of YAML manifests works without rebuild
       - ./registry:/app/registry:ro
       # Dev: mount source for live reload (remove in prod)

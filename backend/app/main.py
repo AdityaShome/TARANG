@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from backend.app.registry.loader import RegistryLoader
 from backend.app.cache import RedisCache
 from backend.app.db import Database
-from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile
+from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile, registry as registry_endpoint
 
 logger = logging.getLogger("tarang")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "info").upper())
@@ -52,6 +52,10 @@ async def lifespan(app: FastAPI):
     _registry.load_all()
     logger.info(f"Registry loaded: {list(_registry.manifest_ids())} plugins")
     app.state.registry = _registry
+
+    # ── Start filesystem watcher (auto hot-reload on YAML changes) ─────────────
+    # Drops a new YAML → live layer appears in frontend within 1s — no restart
+    _registry.start_watcher()
 
     # ── Connect to Redis ──────────────────────────────────────────────────────
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -81,6 +85,8 @@ async def lifespan(app: FastAPI):
         await _cache.disconnect()
     if _db:
         await _db.disconnect()
+    if _registry:
+        _registry.stop_watcher()
     logger.info("TARANG backend shutdown complete")
 
 
@@ -108,12 +114,13 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(metadata.router, prefix="/api")
-app.include_router(slice_.router,   prefix="/api")
-app.include_router(volume.router,   prefix="/api")
-app.include_router(isosurface.router, prefix="/api")
-app.include_router(instruments.router, prefix="/api")
-app.include_router(profile.router,  prefix="/api")
+app.include_router(metadata.router,          prefix="/api")
+app.include_router(slice_.router,            prefix="/api")
+app.include_router(volume.router,            prefix="/api")
+app.include_router(isosurface.router,        prefix="/api")
+app.include_router(instruments.router,       prefix="/api")
+app.include_router(profile.router,           prefix="/api")
+app.include_router(registry_endpoint.router, prefix="/api")
 
 # Option B: hand-rolled OGC endpoints (only active when OPTION_B_MODE=true)
 if os.getenv("OPTION_B_MODE", "false").lower() == "true":

@@ -28,6 +28,8 @@ pandas<2.2.0          # Fix parse_time_string error in erddapy/argopy
 numpy>=1.26.0,<2.0
 scikit-image>=0.24.0  # measure.marching_cubes (method='lewiner' default)
 zarr>=2.18.0          # Option B: chunked Zarr store + Option A: local cache
+watchdog>=4.0.0          # filesystem-watch hot-reload of YAML manifests
+Pillow>=10.0.0            # PNG tile generation for hand-rolled WMS (Option B)
 cftime>=1.6.0         # decode HYCOM times
 
 # ── Copernicus Marine (optional — enabled when COPERNICUS_USERNAME is set) ────

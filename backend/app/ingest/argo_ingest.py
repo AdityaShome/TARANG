@@ -39,14 +39,9 @@ REGIONS = {
 
 
 def fetch_argo_region(region_name: str, config: dict) -> None:
-    """Fetch Argo data for a region and save to local NetCDF."""
-    try:
-        import argopy
-        from argopy import DataFetcher as ArgoDataFetcher
-    except ImportError:
-        logger.error("argopy not installed. Run: pip install argopy==1.4.0")
-        return
-
+    """Fetch Argo data for a region and save to local NetCDF using direct ERDDAP URL."""
+    import urllib.request
+    
     out_path = Path(config["output_file"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -55,26 +50,30 @@ def fetch_argo_region(region_name: str, config: dict) -> None:
         return
 
     min_lon, min_lat, max_lon, max_lat = config["bbox"]
-    logger.info(f"{region_name}: fetching Argo from GDAC "
+    start_time = config['date_start'] + "T00:00:00Z"
+    end_time = config['date_end'] + "T00:00:00Z"
+    
+    logger.info(f"{region_name}: fetching Argo from GDAC (ERDDAP direct) "
                 f"bbox=({min_lon},{min_lat},{max_lon},{max_lat}) "
                 f"dates={config['date_start']} to {config['date_end']}")
 
+    # Construct the exact ERDDAP URL that argopy would use
+    url = (
+        f"https://www.ifremer.fr/erddap/tabledap/ArgoFloats.nc?"
+        f"data_mode%2Clatitude%2Clongitude%2Cposition_qc%2Ctime%2Ctime_qc%2Cdirection%2Cpres%2Ctemp%2Cpsal%2Cplatform_number%2Ccycle_number"
+        f"&latitude>={min_lat}&latitude<={max_lat}"
+        f"&longitude>={min_lon}&longitude<={max_lon}"
+        f"&time>={start_time}&time<={end_time}"
+    )
+    
+    import requests
     try:
-        loader = ArgoDataFetcher(src="gdac").region([
-            min_lon, max_lon,
-            min_lat, max_lat,
-            0, 2000,             # depth: 0–2000 dbar
-            config["date_start"],
-            config["date_end"],
-        ])
-        ds = loader.to_xarray()
-
-        # Save to NetCDF
-        ds.to_netcdf(str(out_path))
-        n_floats   = len(set(ds["PLATFORM_NUMBER"].values))
-        n_profiles = ds.dims.get("N_PROF", 0)
-        logger.info(f"{region_name}: saved {n_profiles} profiles from {n_floats} floats → {out_path}")
-
+        logger.info(f"Downloading from {url}...")
+        r = requests.get(url, timeout=60)
+        r.raise_for_status()
+        with open(out_path, "wb") as f:
+            f.write(r.content)
+        logger.info(f"{region_name}: saved → {out_path}")
     except Exception as e:
         logger.error(f"{region_name}: Argo fetch failed: {e}")
         logger.error("If this is a network error, check your internet connection.")
