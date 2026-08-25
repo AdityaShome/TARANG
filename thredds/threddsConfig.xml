@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  THREDDS Server Configuration for TARANG
+  Enables: ncWMS (WMS), WCS, NetcdfSubset, OPeNDAP
+  Java 17 + Jakarta EE 9+ (Tomcat 10) — TDS v5.9
+-->
+<threddsConfig>
+
+  <serverInformation>
+    <name>TARANG Ocean Visualization — THREDDS Data Server</name>
+    <logoUrl>/thredds/threddsIcon.png</logoUrl>
+    <logoAltText>TARANG</logoAltText>
+    <abstract>
+      THREDDS Data Server for TARANG — SIH 2026 PS 26067.
+      Provides OPeNDAP, WMS, WCS, NCSS access to HYCOM and INCOIS-GODAS
+      ocean model data for Bay of Bengal and Arabian Sea.
+    </abstract>
+    <keywords>ocean, visualization, HYCOM, INCOIS, Bay of Bengal, OPeNDAP</keywords>
+    <contact>
+      <name>TARANG Team</name>
+      <email>tarang-sih@example.com</email>
+    </contact>
+  </serverInformation>
+
+  <!-- ── Content Root ─────────────────────────────────────────────────── -->
+  <contentRootPath>${tds.content.root.path}</contentRootPath>
+
+  <!-- ── OPeNDAP ──────────────────────────────────────────────────────── -->
+  <OPeNDAP>
+    <ascLimit>500</ascLimit>
+    <binLimit>500</binLimit>
+    <allow>true</allow>
+  </OPeNDAP>
+
+  <!-- ── WMS (ncWMS) ──────────────────────────────────────────────────── -->
+  <WMS>
+    <allow>true</allow>
+    <allowRemote>false</allowRemote>
+    <paletteLocationDir>/WEB-INF/palettes</paletteLocationDir>
+    <maxImageWidth>4096</maxImageWidth>
+    <maxImageHeight>4096</maxImageHeight>
+  </WMS>
+
+  <!-- ── WCS ──────────────────────────────────────────────────────────── -->
+  <WCS>
+    <allow>true</allow>
+    <allowRemote>false</allowRemote>
+    <dir>${tds.content.root.path}wcs/</dir>
+  </WCS>
+
+  <!-- ── NetCDF Subset Service ─────────────────────────────────────────── -->
+  <NetcdfSubsetService>
+    <allow>true</allow>
+    <scour>10 min</scour>
+    <maxAge>-1 min</maxAge>
+  </NetcdfSubsetService>
+
+  <!-- ── HTTP File Server ──────────────────────────────────────────────── -->
+  <HTTPServer>
+    <allow>true</allow>
+  </HTTPServer>
+
+  <!-- ── CORS (allow FastAPI and frontend origins) ─────────────────────── -->
+  <CorsFilter>
+    <enabled>true</enabled>
+    <maxAge>1728000</maxAge>
+    <allowedMethods>GET, OPTIONS</allowedMethods>
+    <allowedHeaders>Authorization, Content-Type</allowedHeaders>
+    <allowedOrigin>*</allowedOrigin>
+  </CorsFilter>
+
+</threddsConfig>

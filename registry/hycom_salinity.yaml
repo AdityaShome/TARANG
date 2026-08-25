@@ -1,0 +1,61 @@
+id: hycom_salinity
+label: "HYCOM — Salinity"
+description: "Sea water salinity from HYCOM GLBy0.08 experiment 93.0"
+
+adapter: NetCDFAdapter
+source: "https://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0"
+local_cache: "data/netcdf/hycom_bob.nc"
+variable: salinity
+standard_name: sea_water_salinity
+long_name: "Salinity"
+units: "1e-3"              # practical salinity units (PSU / ppt)
+valid_min: 0.0
+valid_max: 45.0
+missing_value: -30000.0
+
+colormap: plasma
+render_type: volume
+
+depth_levels:
+  - 0
+  - 2
+  - 4
+  - 6
+  - 8
+  - 10
+  - 12
+  - 15
+  - 20
+  - 25
+  - 30
+  - 35
+  - 40
+  - 45
+  - 50
+  - 60
+  - 70
+  - 80
+  - 90
+  - 100
+  - 125
+  - 150
+  - 200
+  - 250
+  - 300
+  - 350
+  - 400
+  - 500
+  - 600
+  - 700
+  - 800
+  - 900
+  - 1000
+  - 1250
+  - 1500
+  - 2000
+  - 2500
+  - 3000
+  - 4000
+  - 5000
+
+default_bbox: [80, 5, 100, 25]

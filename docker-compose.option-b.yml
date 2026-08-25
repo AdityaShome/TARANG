@@ -1,0 +1,119 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TARANG — Option B Fallback (no THREDDS, Zarr + hand-rolled WMS/WCS)
+# Activate this if THREDDS fails the 4-hour Phase 0 checkpoint:
+#   docker-compose -f docker-compose.option-b.yml up --build
+#
+# Differences from docker-compose.yml:
+#   - No thredds service
+#   - Backend OGC endpoints handled by FastAPI wms_wcs/ module
+#   - Data served from Zarr store instead of THREDDS catalog
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.backend
+    image: tarang-backend:latest
+    container_name: tarang_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data:ro
+      - ./registry:/app/registry:ro
+      - ./backend:/app/backend
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://tarang:tarang_secret@postgis:5432/tarang}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DATA_DIR=/app/data
+      - REGISTRY_DIR=/app/registry
+      - OPTION_B_MODE=true
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      postgis:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tarang_net
+
+  postgis:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: tarang_postgis
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-tarang}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tarang_secret}
+      - POSTGRES_DB=${POSTGRES_DB:-tarang}
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./backend/app/db_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tarang"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tarang_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: tarang_redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - tarang_net
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: tarang_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - frontend_dist:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    networks:
+      - tarang_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../infra/Dockerfile.frontend
+      target: dev
+    image: tarang-frontend:latest
+    container_name: tarang_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost/api
+    depends_on:
+      - backend
+    networks:
+      - tarang_net
+
+volumes:
+  postgis_data:
+  redis_data:
+  frontend_dist:
+
+networks:
+  tarang_net:
+    driver: bridge

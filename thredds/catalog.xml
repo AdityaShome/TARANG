@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TARANG THREDDS Catalog
+  ─────────────────────────────────────────────────────────────────────────────
+  This catalog exposes local NetCDF fixtures via all four THREDDS services:
+    • OPeNDAP  → /thredds/dodsC/local/<filename>
+    • WMS      → /thredds/wms/local/<filename>?SERVICE=WMS&...
+    • WCS      → /thredds/wcs/local/<filename>?SERVICE=WCS&...
+    • NCSS     → /thredds/ncss/local/<filename>?...
+  
+  Data files are mounted from host ./data/netcdf/ into the container at
+  /usr/local/tomcat/content/thredds/public/netcdf/ (see docker-compose.yml).
+-->
+<catalog name="TARANG Data Catalog"
+         xmlns="http://www.unidata.ucar.edu/namespaces/thredds/InvCatalog/v1.0"
+         xmlns:xlink="http://www.w3.org/1999/xlink"
+         xmlns:netcdf="http://www.unidata.ucar.edu/namespaces/netcdf/ncml-2.2"
+         version="1.0.1">
+
+  <service name="all" serviceType="Compound" base="">
+    <service name="odap"  serviceType="OPeNDAP"        base="/thredds/dodsC/"/>
+    <service name="wcs"   serviceType="WCS"            base="/thredds/wcs/"/>
+    <service name="wms"   serviceType="WMS"            base="/thredds/wms/"/>
+    <service name="ncss"  serviceType="NetcdfSubset"   base="/thredds/ncss/"/>
+    <service name="http"  serviceType="HTTPServer"     base="/thredds/fileServer/"/>
+  </service>
+
+  <!-- ── Local pre-fetched NetCDF fixtures ───────────────────────────────── -->
+  <dataset name="TARANG Local Datasets" ID="local">
+
+    <dataset name="HYCOM Bay of Bengal Subset" ID="local/hycom_bob"
+             urlPath="local/hycom_bob.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+      <documentation type="summary">
+        HYCOM GLBy0.08 expt_93.0 subset for Bay of Bengal
+        (lat: 5-25 N, lon: 80-100 E). Variables: water_temp, salinity,
+        water_u, water_v, surf_el. CF-1.6 compliant.
+      </documentation>
+    </dataset>
+
+    <dataset name="HYCOM Arabian Sea Subset" ID="local/hycom_arabian"
+             urlPath="local/hycom_arabian.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+    </dataset>
+
+    <dataset name="INCOIS GODAS Sample" ID="local/incois_godas"
+             urlPath="local/incois_godas_sample.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+    </dataset>
+
+    <!-- CI Fixture — xarray tutorial air temperature (tiny, always present) -->
+    <dataset name="CI Fixture — Air Temperature" ID="local/fixture_air"
+             urlPath="local/fixture/air_temperature.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+    </dataset>
+
+  </dataset>
+
+</catalog>

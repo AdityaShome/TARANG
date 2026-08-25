@@ -1,0 +1,87 @@
+name: TARANG CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Backend tests ────────────────────────────────────────────────────────────
+  backend:
+    name: Backend — Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run unit tests
+        run: |
+          cd backend
+          pytest tests/ -v --tb=short
+
+  # ── Frontend build ───────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend — TypeScript build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: TypeScript check + build
+        run: cd frontend && npm run build
+
+  # ── Docker smoke test ────────────────────────────────────────────────────────
+  docker-smoke:
+    name: Docker — compose up + health check
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy env
+        run: cp .env.example .env
+
+      - name: Build backend image only (no THREDDS for CI speed)
+        run: |
+          docker build -f infra/Dockerfile.backend -t tarang-backend:ci .
+
+      - name: Run backend smoke test
+        run: |
+          docker run -d --name tarang-ci \
+            -e DATABASE_URL="" \
+            -e REDIS_URL="" \
+            -e REGISTRY_DIR=/app/registry \
+            -e DATA_DIR=/app/data \
+            -p 8000:8000 \
+            tarang-backend:ci
+          # Wait for startup
+          sleep 15
+          # Health check
+          curl -f http://localhost:8000/health || (docker logs tarang-ci && exit 1)
+          # Metadata endpoint (uses fixture, no DB/Redis needed)
+          curl -f "http://localhost:8000/api/sources" || (docker logs tarang-ci && exit 1)
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f tarang-ci || true

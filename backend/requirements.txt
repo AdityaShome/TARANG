@@ -1,0 +1,65 @@
+# TARANG Backend — Python 3.11 + FastAPI
+# ─────────────────────────────────────────────────────────────────────────────
+# Pin ALL versions per §6/§15 of the README.
+# CRITICAL: argopy 1.4.0 is INCOMPATIBLE with xarray 2024.3.0–2025.6.1
+#   → use xarray 2025.7.0+ (first compatible 2025.x release after 2025.6.1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+
+# ── Data I/O ─────────────────────────────────────────────────────────────────
+# xarray: must be 2025.7.0+ for argopy 1.4.0 compatibility
+xarray==2025.7.0
+netCDF4>=1.6,<2.0
+h5netcdf>=1.8,<2.0
+scipy>=1.13.0         # fallback xarray engine; also used for interpolation
+pydap>=3.4.0          # pure-OPeNDAP backend for xarray.open_dataset
+siphon==0.9.0         # THREDDS catalog browsing
+
+# ── In-situ data ─────────────────────────────────────────────────────────────
+# argopy 1.4.0: Python >=3.11, incompatible with xarray 2024.3.0–2025.6.1
+argopy==1.4.0
+pandas<2.2.0          # Fix parse_time_string error in erddapy/argopy
+
+# ── Scientific computing ──────────────────────────────────────────────────────
+numpy>=1.26.0,<2.0
+scikit-image>=0.24.0  # measure.marching_cubes (method='lewiner' default)
+zarr>=2.18.0          # Option B: chunked Zarr store + Option A: local cache
+cftime>=1.6.0         # decode HYCOM times
+
+# ── Copernicus Marine (optional — enabled when COPERNICUS_USERNAME is set) ────
+copernicusmarine>=1.2.0
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+orjson>=3.10.0        # fast JSON for metadata headers
+msgpack>=1.0.8        # optional binary framing
+
+# ── Caching ───────────────────────────────────────────────────────────────────
+redis>=5.0.0
+hiredis>=2.3.0        # C parser for redis — faster
+
+# ── Database (PostGIS) ────────────────────────────────────────────────────────
+asyncpg>=0.29.0       # async postgres driver
+psycopg2-binary>=2.9  # sync driver for migrations/ingest scripts
+sqlalchemy>=2.0.0
+
+# ── Geospatial ────────────────────────────────────────────────────────────────
+shapely>=2.0.0        # geometry ops for bounding-box queries
+pyproj>=3.6.0         # coordinate transforms
+
+# ── Image generation (WMS hand-rolled — Option B only) ────────────────────────
+matplotlib>=3.9.0
+Pillow>=10.0.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+pyyaml>=6.0.1         # YAML manifest loader
+python-dotenv>=1.0.0  # .env loading
+httpx>=0.27.0         # async HTTP client (for internal health checks)
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+httpx>=0.27.0         # test client for FastAPI

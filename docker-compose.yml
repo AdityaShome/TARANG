@@ -1,0 +1,164 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TARANG — Full Stack (Option A: THREDDS as the OGC compliance layer)
+# Usage:
+#   cp .env.example .env          # fill in credentials
+#   docker-compose up --build     # first run
+#   docker-compose up             # subsequent runs
+#
+# Services:
+#   thredds   → port 8080   (OPeNDAP / WMS / WCS / NCSS)
+#   backend   → port 8000   (FastAPI binary slice/volume/isosurface/instruments)
+#   postgis   → port 5432   (instrument metadata + spatial queries)
+#   redis     → port 6379   (hot-slice cache)
+#   frontend  → port 3000   (React/Three.js dev server; prod: served by nginx)
+#   nginx     → port 80     (reverse proxy — single origin, no CORS)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── THREDDS Data Server (OPeNDAP + ncWMS + WCS + NCSS) ──────────────────
+  thredds:
+    build:
+      context: ./thredds
+      dockerfile: Dockerfile
+    image: tarang-thredds:5.9
+    container_name: tarang_thredds
+    ports:
+      - "8080:8080"
+    volumes:
+      # Pre-fetched NetCDF fixtures for the demo region
+      - ./data/netcdf:/usr/local/tomcat/content/thredds/public/netcdf:ro
+      - ./thredds/catalog.xml:/usr/local/tomcat/content/thredds/catalog.xml:ro
+      - ./thredds/threddsConfig.xml:/usr/local/tomcat/content/thredds/threddsConfig.xml:ro
+    environment:
+      - JAVA_OPTS=-Xmx2g -Xms512m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/thredds/catalog.html"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - tarang_net
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.backend
+    image: tarang-backend:latest
+    container_name: tarang_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount data dir for local NetCDF cache (read-only in prod)
+      - ./data:/app/data:ro
+      # Mount registry so hot-reload of YAML manifests works without rebuild
+      - ./registry:/app/registry:ro
+      # Dev: mount source for live reload (remove in prod)
+      - ./backend:/app/backend
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://tarang:tarang_secret@postgis:5432/tarang}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - THREDDS_BASE_URL=http://thredds:8080/thredds
+      - DATA_DIR=/app/data
+      - REGISTRY_DIR=/app/registry
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - COPERNICUS_USERNAME=${COPERNICUS_USERNAME:-}
+      - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
+    depends_on:
+      postgis:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      thredds:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tarang_net
+
+  # ── PostGIS (instrument metadata + spatial queries) ────────────────────────
+  postgis:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: tarang_postgis
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-tarang}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tarang_secret}
+      - POSTGRES_DB=${POSTGRES_DB:-tarang}
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./backend/app/db_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tarang"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tarang_net
+
+  # ── Redis (hot depth/time slice cache) ────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: tarang_redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - tarang_net
+
+  # ── Nginx Reverse Proxy (single origin — no CORS on demo day) ─────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: tarang_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Frontend build artifact (populated by frontend build step)
+      - frontend_dist:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+      - thredds
+    networks:
+      - tarang_net
+
+  # ── Frontend (Vite dev server — swap for nginx+build in production) ────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../infra/Dockerfile.frontend
+      target: dev
+    image: tarang-frontend:latest
+    container_name: tarang_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost/api
+      - VITE_THREDDS_BASE_URL=http://localhost/thredds
+    depends_on:
+      - backend
+    networks:
+      - tarang_net
+
+volumes:
+  postgis_data:
+  redis_data:
+  frontend_dist:
+
+networks:
+  tarang_net:
+    driver: bridge

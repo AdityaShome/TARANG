@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TARANG Plugin Registry — MOCK NEW SENSOR (Live Demo Entry)
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS FILE IS THE LIVE DEMO EXTENSIBILITY PROOF (§9, §16 Demo Step 5).
+#
+# On stage: presenter adds this file (or edits it) to show a new data source
+# appearing in the frontend layer selector — ZERO code changes, ZERO restart.
+#
+# Demo script: "I'm now adding a new mock BGC chlorophyll sensor to our
+# registry — just a YAML file, no code changes. Watch the layer appear."
+# ─────────────────────────────────────────────────────────────────────────────
+
+id: mock_bgc_chlorophyll
+label: "MOCK — BGC Chlorophyll Sensor (Demo)"
+description: "Demo entry showing plugin extensibility. Simulates BGC-Argo chlorophyll data. Adding this file is the only action required to register a new data source."
+
+adapter: DelimitedTextAdapter      # demonstrates the second adapter type
+source: "data/fixture/mock_chlorophyll.csv"
+local_cache: "data/fixture/mock_chlorophyll.csv"
+variable: chlorophyll_a
+standard_name: mass_concentration_of_chlorophyll_a_in_sea_water
+long_name: "Chlorophyll-a Concentration"
+units: "mg m-3"
+valid_min: 0.0
+valid_max: 10.0
+missing_value: -999.0
+
+colormap: inferno
+render_type: slice           # 2D surface slice — chlorophyll is primarily a surface signal
+
+# Surface-only: only one depth level
+depth_levels:
+  - 0
+
+default_bbox: [80, 5, 100, 25]

@@ -1,0 +1,23 @@
+id: argo_profiles
+label: "Argo Float Profiles"
+description: "Argo GDAC core profiles: TEMP, PSAL, PRES for Bay of Bengal + Arabian Sea. Accessed via argopy 1.4.0."
+
+adapter: ArgoAdapter
+source: "https://data-argo.ifremer.fr"
+local_cache: "data/argo/BoB_argo_2026-08.nc"
+variable: TEMP
+standard_name: sea_water_temperature
+long_name: "In-situ Temperature (Argo)"
+units: degree_Celsius
+valid_min: -2.5
+valid_max: 40.0
+missing_value: 99999.0
+
+render_type: marker          # renders as 3D sphere markers, not volume
+instrument_type: argo
+
+# Argo profiles have pressure levels, not depth levels
+# depth_levels not applicable — profile data is irregularly sampled
+depth_levels: null
+
+default_bbox: [80, 5, 100, 25]

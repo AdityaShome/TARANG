@@ -1,0 +1,71 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TARANG Plugin Registry — HYCOM Water Temperature
+# ─────────────────────────────────────────────────────────────────────────────
+# Adding a new sensor/variable = add a new YAML file here.
+# NO backend or frontend code changes needed. (§9, §20 Rule 6)
+# ─────────────────────────────────────────────────────────────────────────────
+
+id: hycom_water_temp
+label: "HYCOM — Water Temperature"
+description: "Sea water temperature at depth from HYCOM GLBy0.08 experiment 93.0 (global 1/12°, 40 depth levels 0–5000 m)"
+
+adapter: NetCDFAdapter
+source: "https://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0"
+local_cache: "data/netcdf/hycom_bob.nc"      # used during demo (§15 — cache before query)
+variable: water_temp
+standard_name: sea_water_temperature
+long_name: "Water Temperature"
+units: degC
+valid_min: -5.0
+valid_max: 40.0
+missing_value: -30000.0
+
+colormap: viridis
+render_type: volume        # volume | slice | isosurface | vector
+
+# HYCOM's 40 non-uniform depth levels (meters, positive-down)
+# CRITICAL: depth slider must snap to these — never assume linear spacing (§8.1, §20 Rule 4)
+depth_levels:
+  - 0
+  - 2
+  - 4
+  - 6
+  - 8
+  - 10
+  - 12
+  - 15
+  - 20
+  - 25
+  - 30
+  - 35
+  - 40
+  - 45
+  - 50
+  - 60
+  - 70
+  - 80
+  - 90
+  - 100
+  - 125
+  - 150
+  - 200
+  - 250
+  - 300
+  - 350
+  - 400
+  - 500
+  - 600
+  - 700
+  - 800
+  - 900
+  - 1000
+  - 1250
+  - 1500
+  - 2000
+  - 2500
+  - 3000
+  - 4000
+  - 5000
+
+# Demo region defaults
+default_bbox: [80, 5, 100, 25]    # [minLon, minLat, maxLon, maxLat] — Bay of Bengal
