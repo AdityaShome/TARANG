@@ -42,6 +42,7 @@ export interface IsosurfaceHeader extends CFMetadata {
   dtype_faces:  'uint32'
   threshold:    number
   time:         string
+  volume_shape: [number, number, number]  // (depth, lat, lon) — the voxel grid verts are indexed into
 }
 
 // ── Metadata endpoint response ────────────────────────────────────────────────

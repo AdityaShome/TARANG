@@ -24,8 +24,22 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 const _inflight = new Map<string, Promise<unknown>>()
 
 function dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  if (_inflight.has(key)) {
-    return _inflight.get(key) as Promise<T>
+  const existing = _inflight.get(key) as Promise<T> | undefined
+  if (existing) {
+    // The in-flight request under this key carries ONE caller's AbortSignal, but every caller
+    // sharing this key gets the SAME promise back. If that signal's owner aborts (React 18
+    // StrictMode's mount -> cleanup -> mount is a common trigger — the throwaway first mount's
+    // cleanup fires right as the real second mount starts and requests the same key), every
+    // OTHER caller waiting on this promise — who did nothing wrong and didn't abort anything —
+    // would otherwise inherit that AbortError and hang/fail with no unaborted retry. Instead,
+    // transparently retry with a fresh request on their behalf.
+    return existing.catch((err: unknown) => {
+      if (err instanceof Error && err.name === 'AbortError') {
+        _inflight.delete(key)
+        return dedupe(key, fn)
+      }
+      throw err
+    })
   }
   const p = fn().finally(() => _inflight.delete(key))
   _inflight.set(key, p)

@@ -1,6 +1,7 @@
 import React from 'react'
 import { SceneManager } from '../../scene/SceneManager'
 import { ControlPanel } from '../../controls/ControlPanel'
+import { SearchBar } from '../../controls/SearchBar'
 import { useTarangStore } from '../../state/store'
 import { ProfilePopover } from '../../charts/ProfilePopover'
 import { Legend } from '../../components/Legend'
@@ -29,6 +30,7 @@ export function ForecasterConsole() {
           <span style={styles.brandText}>TARANG</span>
           <span style={styles.brandSub}>Ocean Visualization</span>
         </div>
+        <SearchBar />
         <ControlPanel />
 
         {/* Mode switch button */}

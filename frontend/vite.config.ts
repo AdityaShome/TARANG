@@ -7,6 +7,13 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    // Docker Desktop bind mounts on Windows/macOS don't reliably forward native
+    // filesystem change events into the container, so Vite's default watcher misses
+    // edits made from the host. Polling is slower but actually fires HMR.
+    watch: {
+      usePolling: true,
+      interval: 300,
+    },
     proxy: {
       // During dev (in Docker): use service names on the Docker network
       '/api': {

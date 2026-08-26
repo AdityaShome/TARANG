@@ -97,7 +97,9 @@ def ingest_to_postgis(nc_path: str, db_url: str) -> None:
     conn = psycopg2.connect(db_url)
     cur  = conn.cursor()
 
-    # Ensure schema
+    # Ensure schema. UNIQUE constraint is required for ON CONFLICT DO NOTHING below to actually
+    # do anything — without it, Postgres never has a conflict to detect, so re-running this
+    # ingest (e.g. once per region, or a second time by hand) silently duplicates every row.
     cur.execute("""
         CREATE TABLE IF NOT EXISTS instruments (
             id SERIAL PRIMARY KEY,
@@ -106,29 +108,58 @@ def ingest_to_postgis(nc_path: str, db_url: str) -> None:
             geom GEOMETRY(POINT, 4326)
         );
         CREATE INDEX IF NOT EXISTS instruments_geom_idx ON instruments USING GIST(geom);
+        CREATE UNIQUE INDEX IF NOT EXISTS instruments_platform_cycle_idx
+            ON instruments (platform_id, cycle_number);
     """)
 
-    inserted = 0
-    n_prof = ds.dims.get("N_PROF", 0)
+    # Argo NetCDF/ERDDAP files come in several incompatible flat-table shapes depending on how
+    # they were fetched — seen in practice from this exact ingest pipeline: ERDDAP's tabledap
+    # ("row" dim, lowercase platform_number/latitude/...) and argopy's point export ("N_POINTS"
+    # dim, uppercase PLATFORM_NUMBER/LATITUDE/...). Neither is the classic multi-profile format
+    # (N_PROF dim, PLATFORM_NUMBER/JULD) this function originally assumed — which is why every
+    # prior run inserted 0 of 0 profiles regardless of the (large, real) data actually present.
+    # Resolve whichever column names this particular file actually has instead of guessing one.
+    def _col(*candidates: str) -> str:
+        for name in candidates:
+            if name in ds.variables:
+                return name
+        raise KeyError(f"None of {candidates} found in {nc_path}; variables: {list(ds.variables)}")
 
-    for i in range(n_prof):
+    col_platform = _col("platform_number", "PLATFORM_NUMBER")
+    col_cycle    = _col("cycle_number", "CYCLE_NUMBER")
+    col_lat      = _col("latitude", "LATITUDE")
+    col_lon      = _col("longitude", "LONGITUDE")
+    col_time     = _col("time", "TIME", "JULD")
+
+    # One float position marker per (platform, cycle) — group the many depth-level measurement
+    # rows down to their single shared lat/lon/time.
+    df = ds[[col_platform, col_cycle, col_lat, col_lon, col_time]].to_dataframe()
+    df = df.rename(columns={
+        col_platform: "platform_number", col_cycle: "cycle_number",
+        col_lat: "latitude", col_lon: "longitude", col_time: "time",
+    })
+    profiles = df.groupby(["platform_number", "cycle_number"], as_index=False).first()
+
+    inserted = 0
+    for _, row in profiles.iterrows():
         try:
-            platform_id = str(ds["PLATFORM_NUMBER"].values[i]).strip()
-            lat   = float(ds["LATITUDE"].values[i])
-            lon   = float(ds["LONGITUDE"].values[i])
-            cycle = int(ds["CYCLE_NUMBER"].values[i]) if "CYCLE_NUMBER" in ds else None
-            time  = str(ds["JULD"].values[i]) if "JULD" in ds else None
+            platform_id = str(row["platform_number"]).strip()
+            lat   = float(row["latitude"])
+            lon   = float(row["longitude"])
+            cycle = int(row["cycle_number"])
+            time  = str(row["time"])
 
             cur.execute("""
                 INSERT INTO instruments (platform_id, type, lat, lon, time_start, cycle_number, geom)
                 VALUES (%s, 'argo', %s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (platform_id, cycle_number) DO NOTHING
             """, (platform_id, lat, lon, time, cycle, lon, lat))
             inserted += 1
         except Exception as e:
-            logger.warning(f"Row {i} skipped: {e}")
+            logger.warning(f"Profile {row.get('platform_number')}/{row.get('cycle_number')} skipped: {e}")
 
     conn.commit()
+    n_prof = len(profiles)
     cur.close()
     conn.close()
     logger.info(f"PostGIS: inserted {inserted} of {n_prof} profiles from {nc_path}")

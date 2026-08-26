@@ -18,6 +18,12 @@ class ArgoAdapter(DataSourceAdapter):
     def __init__(self, manifest: dict):
         super().__init__(manifest)
 
+    def open(self, bbox=None) -> xr.Dataset:
+        raise NotImplementedError(
+            "ArgoAdapter is point-data only; use /api/instruments and /api/profile "
+            "instead of opening a gridded xr.Dataset."
+        )
+
     def get_metadata(self) -> dict:
         variable = self.variable
         return {

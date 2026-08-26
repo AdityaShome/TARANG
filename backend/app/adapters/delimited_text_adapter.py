@@ -34,7 +34,7 @@ class DelimitedTextAdapter(DataSourceAdapter):
         self._df: pd.DataFrame | None = None
         self._ds: xr.Dataset | None = None
 
-    def open(self) -> xr.Dataset:
+    def open(self, bbox=None) -> xr.Dataset:
         """Load CSV and pivot to a minimal xarray Dataset."""
         if self._ds is not None:
             return self._ds

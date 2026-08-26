@@ -15,6 +15,10 @@ python-multipart==0.0.9
 xarray==2025.7.0
 netCDF4>=1.6,<2.0
 h5netcdf>=1.8,<2.0
+h5py>=3.10.0           # h5netcdf's own dependency resolution didn't pull this into the image;
+                       # copernicusmarine.subset() needs it directly too (fails at runtime with
+                       # "No module named 'h5py'" otherwise — only surfaces on a live region
+                       # search, since that's the only codepath that writes/reads via h5py)
 scipy>=1.13.0         # fallback xarray engine; also used for interpolation
 pydap>=3.4.0          # pure-OPeNDAP backend for xarray.open_dataset
 siphon==0.9.0         # THREDDS catalog browsing

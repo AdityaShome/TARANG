@@ -105,12 +105,21 @@ class DataSourceAdapter(abc.ABC):
         self.source_url: str = manifest["source"]
         self.local_cache: str = manifest.get("local_cache", "")
         self.variable: str = manifest["variable"]
+        # Geographic extent actually covered by local_cache (§20 Rule 8's "cache before you
+        # query live" only holds when the request falls inside that cache). [minLon, minLat,
+        # maxLon, maxLat]; None means "no known extent" (e.g. a global file, or no local cache).
+        self.local_cache_bbox: list[float] | None = manifest.get("local_cache_bbox")
+        # Copernicus Marine dataset_id to query live (via copernicusmarine.open_dataset,
+        # bbox-scoped, lazy) when a request falls outside local_cache_bbox — lets a researcher
+        # search any sea, not just whatever region happens to be pre-downloaded.
+        self.live_dataset_id: str | None = manifest.get("live_dataset_id")
 
     @abc.abstractmethod
-    def open(self) -> xr.Dataset:
+    def open(self, bbox: tuple[float, float, float, float] | None = None) -> xr.Dataset:
         """
-        Open the data source lazily. Must use the local_cache path if it exists
-        (§20 Rule 8 — cache before you query live). Falls back to source_url.
+        Open the data source lazily. Must use the local_cache path if it exists AND covers
+        `bbox` (§20 Rule 8 — cache before you query live). Falls back to a live, bbox-scoped
+        fetch (via live_dataset_id) or source_url otherwise.
         Returns an xarray Dataset opened lazily (no data pulled yet).
         """
 

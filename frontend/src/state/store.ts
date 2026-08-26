@@ -30,7 +30,9 @@ import type { UIMode, RenderMode, ColormapName, ColormapConfig, SourceEntry } fr
 
 // ── Default values ────────────────────────────────────────────────────────────
 
-const DEFAULT_BBOX: [number, number, number, number] = [80, 5, 100, 25]  // Bay of Bengal
+// Not shown by default — see hasSearchedRegion below. Only used as a harmless placeholder
+// value for `bbox`'s type until the researcher actually searches a region.
+const DEFAULT_BBOX: [number, number, number, number] = [80, 5, 100, 25]
 
 const DEFAULT_COLORMAP: ColormapConfig = {
   name:                 'viridis',
@@ -48,6 +50,10 @@ interface TarangState {
   uiMode:     UIMode
   isLoading:  boolean
   error:      string | null
+  // Distinct from isLoading (which specifically gates the source-switch race in
+  // SceneManager.tsx) — this just reflects whether a data-layer fetch is currently in flight,
+  // for UI feedback (e.g. SearchBar's "fetching live data…" spinner after a region search).
+  isFetchingLayers: boolean
 
   // Source selection
   sources:         SourceEntry[]
@@ -66,6 +72,14 @@ interface TarangState {
   isoThreshold: number
   colormap:     ColormapConfig
 
+  // Region search — label for display, and a one-shot camera fly-to target consumed by
+  // SceneManager (cleared back to null right after it acts on it). hasSearchedRegion gates
+  // whether SceneManager fetches/renders ANY data layer — there is no default sea; the
+  // researcher picks one by searching, per the actual requirement (not a fixed demo region).
+  regionLabel:       string | null
+  flyToTarget:       { lat: number; lon: number } | null
+  hasSearchedRegion: boolean
+
   // Instrument selection
   selectedPlatformId: string | null
 
@@ -79,6 +93,8 @@ interface TarangState {
   setActiveDepthIdx:   (idx: number)           => void   // always an index, not meters
   setActiveTimeIdx:    (idx: number)           => void
   setBbox:             (bbox: [number, number, number, number]) => void
+  searchRegion:        (bbox: [number, number, number, number], label: string) => void
+  clearFlyToTarget:    () => void
   setDepthLevels:      (levels: number[])      => void
   setTimeSteps:        (steps: string[])       => void
   setRenderMode:       (mode: RenderMode)      => void
@@ -88,6 +104,7 @@ interface TarangState {
   setSelectedPlatform: (id: string | null)     => void
   setSources:          (s: SourceEntry[])      => void
   setLoading:          (v: boolean)            => void
+  setFetchingLayers:   (v: boolean)            => void
   setError:            (e: string | null)      => void
   toggleLayer:         (id: string)            => void
 
@@ -102,11 +119,15 @@ export const useTarangStore = create<TarangState>()(
     // Defaults
     uiMode:              'console',
     isLoading:           false,
+    isFetchingLayers:    false,
     error:               null,
 
     sources:             [],
     activeSourceId:      'copernicus_temp',
-    activeVar:           'water_temp',
+    // Left empty (not hardcoded to a guessed variable name) until App.tsx's bootstrap
+    // effect fetches real metadata for activeSourceId and calls setActiveVar — see the
+    // comment on setActiveSource below for why an empty activeVar matters.
+    activeVar:           '',
 
     activeDepthIdx:      0,
     activeTimeIdx:       0,
@@ -117,6 +138,10 @@ export const useTarangStore = create<TarangState>()(
     renderMode:          'slice',
     isoThreshold:        20,     // 20°C isotherm — good default for BoB
     colormap:            DEFAULT_COLORMAP,
+
+    regionLabel:         null,
+    flyToTarget:         null,
+    hasSearchedRegion:   false,
 
     selectedPlatformId:  null,
     layerVisibility:     {
@@ -129,11 +154,31 @@ export const useTarangStore = create<TarangState>()(
 
     // ── Actions ───────────────────────────────────────────────────────────────
     setUIMode:           (mode)    => set({ uiMode: mode }),
-    setActiveSource:     (id)      => set({ activeSourceId: id, activeDepthIdx: 0, activeTimeIdx: 0 }),
+    // activeVar is cleared here (not just left stale) so it never briefly names a variable
+    // that belongs to the PREVIOUS source. App.tsx's bootstrap effect re-fetches metadata for
+    // the new source and calls setActiveVar once it knows the right name. Consumers (SceneManager,
+    // Legend) treat an empty activeVar as "still loading" and skip firing requests / rendering.
+    setActiveSource:     (id)      => set({ activeSourceId: id, activeVar: '', activeDepthIdx: 0, activeTimeIdx: 0 }),
     setActiveVar:        (v)       => set({ activeVar: v }),
     setActiveDepthIdx:   (idx)     => set({ activeDepthIdx: idx }),
     setActiveTimeIdx:    (idx)     => set({ activeTimeIdx: idx }),
     setBbox:             (bbox)    => set({ bbox }),
+    // A region search changes WHERE every layer fetches data from (bbox — already reactive,
+    // every layer's update() effect depends on it) and asks the camera to fly there. It does
+    // NOT touch activeSourceId/activeVar — the same source/variable just gets re-queried for
+    // the new bbox (live-fetched from Copernicus if outside a local source's cached extent).
+    searchRegion:        (bbox, label) => {
+      const [minLon, minLat, maxLon, maxLat] = bbox
+      set({
+        bbox,
+        regionLabel: label,
+        hasSearchedRegion: true,
+        flyToTarget: { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 },
+        activeDepthIdx: 0,
+        activeTimeIdx: 0,
+      })
+    },
+    clearFlyToTarget:    () => set({ flyToTarget: null }),
     setDepthLevels:      (levels)  => set({ depthLevels: levels }),
     setTimeSteps:        (steps)   => set({ timeSteps: steps }),
     setRenderMode:       (mode)    => set({ renderMode: mode }),
@@ -143,6 +188,7 @@ export const useTarangStore = create<TarangState>()(
     setSelectedPlatform: (id)      => set({ selectedPlatformId: id }),
     setSources:          (sources) => set({ sources }),
     setLoading:          (v)       => set({ isLoading: v }),
+    setFetchingLayers:   (v)       => set({ isFetchingLayers: v }),
     setError:            (e)       => set({ error: e }),
     toggleLayer:         (id)      => set(s => ({
       layerVisibility: { ...s.layerVisibility, [id]: !s.layerVisibility[id] }

@@ -242,7 +242,7 @@ const styles: Record<string, React.CSSProperties> = {
   sliderLabels: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'rgba(160, 196, 232, 0.5)', marginTop: '2px' },
   toggleGroup: { display: 'flex', gap: '4px' },
   toggle:      { flex: 1, padding: '6px 4px', background: 'rgba(0, 30, 60, 0.6)', border: '1px solid rgba(0, 180, 255, 0.2)', borderRadius: '6px', color: '#a0c4e8', cursor: 'pointer', fontSize: '12px', fontWeight: '500' },
-  toggleActive: { background: 'rgba(0, 180, 255, 0.2)', borderColor: '#00d4ff', color: '#00d4ff' },
+  toggleActive: { background: 'rgba(0, 180, 255, 0.2)', border: '1px solid #00d4ff', color: '#00d4ff' },
   row:         { display: 'flex', gap: '8px' },
   checkRow:    { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' },
   inputLabel:  { fontSize: '11px', color: 'rgba(160, 196, 232, 0.6)', marginBottom: '4px' },
