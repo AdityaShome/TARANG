@@ -15,7 +15,8 @@ export class DepthSliceLayer implements Layer {
 
   build(scene: THREE.Scene) {
     this.scene = scene
-    const geometry = new THREE.PlaneGeometry(1, 1)
+    // High-segment plane so it can bend smoothly onto the sphere
+    const geometry = new THREE.PlaneGeometry(1, 1, 128, 128)
     
     this.material = new THREE.ShaderMaterial({
       vertexShader: vertShader,
@@ -24,14 +25,16 @@ export class DepthSliceLayer implements Layer {
         u_data: { value: null },
         u_clim: { value: new THREE.Vector2(0, 1) },
         u_opacity: { value: 1.0 },
-        u_missing: { value: 99999.0 }
+        u_missing: { value: 99999.0 },
+        u_bounds: { value: new THREE.Vector4(-180, 180, -90, 90) }
       },
       transparent: true,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
+      depthWrite: false
     })
 
     this.mesh = new THREE.Mesh(geometry, this.material)
-    this.mesh.rotation.x = -Math.PI / 2 // Lie flat on XZ plane
+    // We do NOT rotate or scale the mesh physically. The vertex shader handles the spherical projection.
     scene.add(this.mesh)
   }
 
@@ -82,14 +85,23 @@ export class DepthSliceLayer implements Layer {
         }
 
         // Apply config from state/params
-        const userClim = state.colormapConfig?.clim || [header.valid_min, header.valid_max]
+        const userClim = [state.colormap.min, state.colormap.max]
         this.material.uniforms.u_clim.value.set(userClim[0], userClim[1])
         this.material.uniforms.u_missing.value = header.missing_value
         
         // Scale and position: assuming 1 scene unit = 1 degree
-        const widthDeg = header.bounds.lon[1] - header.bounds.lon[0]
-        const heightDeg = header.bounds.lat[1] - header.bounds.lat[0]
-        this.mesh.scale.set(widthDeg, heightDeg, 1)
+        const lonMin = header.bounds.lon[0]
+        const lonMax = header.bounds.lon[1]
+        const latMin = header.bounds.lat[0]
+        const latMax = header.bounds.lat[1]
+        
+        // Pass bounds to vertex shader to warp onto sphere
+        this.material.uniforms.u_bounds.value.set(lonMin, lonMax, latMin, latMax)
+        
+        // Ensure mesh is at origin with scale 1, since shader handles everything
+        this.mesh.position.set(0, 0, 0)
+        this.mesh.rotation.set(0, 0, 0)
+        this.mesh.scale.set(1, 1, 1)
         
       } catch (err: any) {
         if (err.name === 'AbortError') {

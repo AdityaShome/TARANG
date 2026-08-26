@@ -105,7 +105,7 @@ export const useTarangStore = create<TarangState>()(
     error:               null,
 
     sources:             [],
-    activeSourceId:      'hycom_water_temp',
+    activeSourceId:      'copernicus_temp',
     activeVar:           'water_temp',
 
     activeDepthIdx:      0,

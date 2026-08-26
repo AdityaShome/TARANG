@@ -8,23 +8,22 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     proxy: {
-      // During dev: proxy API calls to FastAPI backend
+      // During dev (in Docker): use service names on the Docker network
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://backend:8000',
         changeOrigin: true,
       },
-      // During dev: proxy THREDDS calls
       '/thredds': {
-        target: 'http://localhost:8080',
+        target: 'http://thredds:8080',
         changeOrigin: true,
       },
       '/wms': {
-        target: 'http://localhost:8080',
+        target: 'http://thredds:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/wms/, '/thredds/wms'),
       },
       '/wcs': {
-        target: 'http://localhost:8080',
+        target: 'http://thredds:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/wcs/, '/thredds/wcs'),
       },

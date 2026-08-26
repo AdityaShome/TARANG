@@ -147,8 +147,8 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_API_BASE_URL=http://localhost/api
-      - VITE_THREDDS_BASE_URL=http://localhost/thredds
+      - VITE_API_BASE_URL=/api
+      - VITE_THREDDS_BASE_URL=/thredds
     depends_on:
       - backend
     networks:

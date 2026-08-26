@@ -1,6 +1,5 @@
-import React from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { useTarangStore, debounce } from '../state/store'
-import { useMemo } from 'react'
 
 /**
  * ControlPanel — Container for all Forecaster Console controls.
@@ -26,8 +25,10 @@ export function ControlPanel() {
     let interval: any
     if (isPlaying) {
       interval = setInterval(() => {
-        const nextIdx = (activeTimeIdx + 1) % timeSteps.length
-        setActiveTimeIdx(nextIdx)
+        if (timeSteps.length > 0) {
+          const nextIdx = (activeTimeIdx + 1) % timeSteps.length
+          setActiveTimeIdx(nextIdx)
+        }
       }, 500)
     }
     return () => clearInterval(interval)

@@ -4,7 +4,7 @@ import { fetchVolume } from '../../api/client'
 import { useTarangStore } from '../../state/store'
 
 import vertShader from '../shaders/volumeVert.glsl?raw'
-import fragShader from '../shaders/volumeFrag.glsl?raw'
+import fragShader from '../shaders/volumeFrag_v2.glsl?raw'
 
 export class VolumeLayer implements Layer {
   private mesh: THREE.Mesh | null = null
@@ -29,7 +29,8 @@ export class VolumeLayer implements Layer {
         u_iso_threshold: { value: 20.0 }
       },
       transparent: true,
-      side: THREE.BackSide
+      side: THREE.BackSide,
+      glslVersion: THREE.GLSL3
     })
 
     this.mesh = new THREE.Mesh(geometry, this.material)
@@ -78,7 +79,7 @@ export class VolumeLayer implements Layer {
         }
 
         const state = useTarangStore.getState()
-        const userClim = state.colormapConfig?.clim || [header.valid_min, header.valid_max]
+        const userClim = [state.colormap.min, state.colormap.max]
         this.material.uniforms.u_clim.value.set(userClim[0], userClim[1])
         this.material.uniforms.u_missing.value = header.missing_value
 
@@ -86,7 +87,7 @@ export class VolumeLayer implements Layer {
         const heightDeg = header.bounds.lat[1] - header.bounds.lat[0]
         
         const maxDepthM = Math.max(...header.depth_levels)
-        const vExag = state.colormapConfig?.verticalExaggeration || 50
+        const vExag = state.colormap.verticalExaggeration || 50
         const depthScale = (maxDepthM / 111000) * vExag 
 
         this.mesh.scale.set(widthDeg, heightDeg, depthScale)

@@ -34,8 +34,10 @@ watchdog>=4.0.0          # filesystem-watch hot-reload of YAML manifests
 Pillow>=10.0.0            # PNG tile generation for hand-rolled WMS (Option B)
 cftime>=1.6.0         # decode HYCOM times
 
-# ── Copernicus Marine (optional — enabled when COPERNICUS_USERNAME is set) ────
+# ── Copernicus Marine (optional — heavy: pulls boto3/pyarrow/dask/pystac) ─────
+dask>=2024.1.0        # required for xarray chunks={} (lazy loading)
 copernicusmarine>=1.2.0
+
 
 # ── Serialization ─────────────────────────────────────────────────────────────
 orjson>=3.10.0        # fast JSON for metadata headers

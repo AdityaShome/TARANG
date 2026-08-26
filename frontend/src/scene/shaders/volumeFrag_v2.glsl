@@ -11,16 +11,31 @@ uniform float u_missing;
 uniform int u_renderstyle; // 0: MIP, 1: ISO
 uniform float u_iso_threshold;
 
-out vec4 color;
 
-vec3 colormap(float t) {
-    const vec3 c0 = vec3(0.277, 0.005, 0.334);
-    const vec3 c1 = vec3(0.105, 0.403, 0.468);
-    const vec3 c2 = vec3(0.122, 0.617, 0.419);
-    const vec3 c3 = vec3(0.993, 0.906, 0.144);
-    return mix(mix(c0, c1, smoothstep(0.0, 0.33, t)),
-               mix(c2, c3, smoothstep(0.66, 1.0, t)),
-               smoothstep(0.33, 0.66, t));
+layout(location = 0) out highp vec4 pc_fragColor;
+
+// Safer, visually stunning Turbo/Inferno mix
+vec3 safeColormap(float t) {
+    t = clamp(t, 0.0, 1.0);
+    // Dark Blue -> Cyan -> Green -> Yellow -> Orange -> Deep Red
+    vec3 c0 = vec3(0.1, 0.1, 0.5); // Cold
+    vec3 c1 = vec3(0.0, 0.8, 0.8); // Cool
+    vec3 c2 = vec3(0.2, 0.9, 0.2); // Mid
+    vec3 c3 = vec3(0.9, 0.9, 0.1); // Warm
+    vec3 c4 = vec3(0.9, 0.3, 0.0); // Hot
+    vec3 c5 = vec3(0.6, 0.0, 0.0); // Extremely Hot
+    
+    float n = 5.0;
+    float scaled = t * n;
+    int idx = int(scaled);
+    float fract = scaled - float(idx);
+    
+    if (idx == 0) return mix(c0, c1, fract);
+    if (idx == 1) return mix(c1, c2, fract);
+    if (idx == 2) return mix(c2, c3, fract);
+    if (idx == 3) return mix(c3, c4, fract);
+    if (idx >= 4) return mix(c4, c5, fract);
+    return c5;
 }
 
 vec2 hitBox(vec3 orig, vec3 dir) {
@@ -68,7 +83,7 @@ void main() {
             } else { // ISO
                 if (val >= u_iso_threshold) {
                     float norm = clamp((val - u_clim.x) / (u_clim.y - u_clim.x), 0.0, 1.0);
-                    accColor = vec4(colormap(norm), u_opacity);
+                    accColor = vec4(safeColormap(norm), u_opacity);
                     break;
                 }
             }
@@ -79,9 +94,9 @@ void main() {
     if (u_renderstyle == 0) {
         if (maxValue == -99999.0) discard;
         float norm = clamp((maxValue - u_clim.x) / (u_clim.y - u_clim.x), 0.0, 1.0);
-        accColor = vec4(colormap(norm), u_opacity);
+        accColor = vec4(safeColormap(norm), u_opacity);
     }
 
     if (accColor.a == 0.0) discard;
-    color = accColor;
+    pc_fragColor = accColor;
 }

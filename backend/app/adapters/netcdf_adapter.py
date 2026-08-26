@@ -67,8 +67,8 @@ class NetCDFAdapter(DataSourceAdapter):
 
     def open(self) -> xr.Dataset:
         """Open the dataset lazily. Cached after first open."""
-        if self._ds is not None:
-            return self._ds
+        # Do not cache self._ds because xarray + netCDF4 is not thread-safe.
+        # Open fresh on every request.
 
         source = self._resolve_source()
         logger.info(f"Opening dataset: {source}")
@@ -76,15 +76,15 @@ class NetCDFAdapter(DataSourceAdapter):
         # Engine priority: netCDF4 > h5netcdf > scipy (§6)
         for engine in ["netcdf4", "h5netcdf", "scipy"]:
             try:
-                self._ds = xr.open_dataset(
+                ds = xr.open_dataset(
                     source,
                     engine=engine,
-                    mask_and_scale=True,   # apply _FillValue masking automatically
+                    mask_and_scale=True,
                     decode_times=True,
-                    chunks={},             # open lazily (dask-backed chunks)
+                    # No chunks parameter, let xarray manage memory without dask
                 )
-                logger.info(f"Opened with engine '{engine}': {list(self._ds.data_vars)}")
-                return self._ds
+                logger.info(f"Opened with engine '{engine}': {list(ds.data_vars)}")
+                return ds
             except Exception as e:
                 logger.debug(f"Engine '{engine}' failed: {e}")
                 continue
@@ -154,11 +154,13 @@ class NetCDFAdapter(DataSourceAdapter):
         ds = self.open()
         min_lon, min_lat, max_lon, max_lat = bbox
 
+        lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+        lon_dim = "longitude" if "longitude" in ds.dims else "lon"
         # ── Subset to bbox first (smallest possible read) ──────────────────────
-        subset = ds[variable].sel(
-            lat=slice(min_lat, max_lat),
-            lon=slice(min_lon, max_lon),
-        )
+        subset = ds[variable].sel(**{
+            lat_dim: slice(min_lat, max_lat),
+            lon_dim: slice(min_lon, max_lon),
+        })
 
         # ── Select time step ──────────────────────────────────────────────────
         if "time" in subset.dims:
@@ -174,12 +176,15 @@ class NetCDFAdapter(DataSourceAdapter):
             subset = subset.sel({depth_dim: depth_m}, method="nearest")
             actual_depth_m = float(subset.coords[depth_dim].values)
 
-        # ── Compute (pulls only the subset bytes) ─────────────────────────────
-        arr = subset.values.astype(np.float32)
-
         # ── Build CF metadata ─────────────────────────────────────────────────
         depth_levels = self._resolve_depth_levels(ds)
         meta = self._extract_cf_meta(ds, variable, depth_levels)
+        
+        # ── Compute (pulls only the subset bytes) and replace NaNs ────────────
+        arr = subset.values.astype(np.float32)
+        # mask_and_scale=True replaces missing data with NaN. We must convert it back
+        # to a numerical value so WebGL can correctly compare and discard land pixels.
+        arr = np.nan_to_num(arr, nan=meta.missing_value)
         meta.bounds = {
             "lat": [float(min_lat), float(max_lat)],
             "lon": [float(min_lon), float(max_lon)],
@@ -189,8 +194,8 @@ class NetCDFAdapter(DataSourceAdapter):
         return SliceResult(
             data=arr,
             meta=meta,
-            lat=ds.coords["lat"].sel(lat=slice(min_lat, max_lat)).values.astype(np.float32),
-            lon=ds.coords["lon"].sel(lon=slice(min_lon, max_lon)).values.astype(np.float32),
+            lat=ds.coords[lat_dim].sel(**{lat_dim: slice(min_lat, max_lat)}).values.astype(np.float32),
+            lon=ds.coords[lon_dim].sel(**{lon_dim: slice(min_lon, max_lon)}).values.astype(np.float32),
             depth_m=actual_depth_m,
             time_str=time_str,
         )
@@ -209,11 +214,13 @@ class NetCDFAdapter(DataSourceAdapter):
         ds = self.open()
         min_lon, min_lat, max_lon, max_lat = bbox
 
+        lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+        lon_dim = "longitude" if "longitude" in ds.dims else "lon"
         # ── bbox subset first ─────────────────────────────────────────────────
-        subset = ds[variable].sel(
-            lat=slice(min_lat, max_lat),
-            lon=slice(min_lon, max_lon),
-        )
+        subset = ds[variable].sel(**{
+            lat_dim: slice(min_lat, max_lat),
+            lon_dim: slice(min_lon, max_lon),
+        })
 
         # ── time step ─────────────────────────────────────────────────────────
         if "time" in subset.dims:
@@ -243,8 +250,8 @@ class NetCDFAdapter(DataSourceAdapter):
         return VolumeResult(
             data=arr,
             meta=meta,
-            lat=ds.coords["lat"].sel(lat=slice(min_lat, max_lat)).values.astype(np.float32),
-            lon=ds.coords["lon"].sel(lon=slice(min_lon, max_lon)).values.astype(np.float32),
+            lat=ds.coords[lat_dim].sel(**{lat_dim: slice(min_lat, max_lat)}).values.astype(np.float32),
+            lon=ds.coords[lon_dim].sel(**{lon_dim: slice(min_lon, max_lon)}).values.astype(np.float32),
             time_str=time_str,
         )
 

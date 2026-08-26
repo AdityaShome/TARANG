@@ -55,12 +55,11 @@ export class IsosurfaceLayer implements Layer {
 
         this.mesh = new THREE.Mesh(geometry, material)
         
-        const [depthSize, latSize, lonSize] = header.shape
-        const widthDeg = header.bounds.lon[1] - header.bounds.lon[0]
-        const heightDeg = header.bounds.lat[1] - header.bounds.lat[0]
+        const widthDeg = 20
+        const heightDeg = 20
         
         const maxDepthM = Math.max(...header.depth_levels)
-        const vExag = state.colormapConfig?.verticalExaggeration || 50
+        const vExag = state.colormap.verticalExaggeration || 50
         const depthScale = (maxDepthM / 111000) * vExag 
 
         // Apply scale. Verts are (depth, lat, lon).

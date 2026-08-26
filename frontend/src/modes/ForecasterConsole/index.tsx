@@ -3,6 +3,7 @@ import { SceneManager } from '../../scene/SceneManager'
 import { ControlPanel } from '../../controls/ControlPanel'
 import { useTarangStore } from '../../state/store'
 import { ProfilePopover } from '../../charts/ProfilePopover'
+import { Legend } from '../../components/Legend'
 
 /**
  * Forecaster Console — Power-user UI mode
@@ -48,6 +49,9 @@ export function ForecasterConsole() {
 
       {/* ── Profile Popover (visible when a float is selected) ─────────── */}
       {selectedPlatformId && <ProfilePopover platformId={selectedPlatformId} />}
+      
+      {/* ── Thermal Legend ─────────────────────────────────────────────── */}
+      <Legend />
     </div>
   )
 }
