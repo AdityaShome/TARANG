@@ -70,7 +70,10 @@ export interface SourceMetadata {
 // ── Instruments endpoint ──────────────────────────────────────────────────────
 export interface InstrumentPosition {
   platform_id:  string
-  type:         'argo' | 'glider' | 'ctd' | 'bgc'
+  // Backend has no allow-list on this (see /api/instruments) — new sensor types just need new
+  // rows in PostGIS, no code change, so this is deliberately not a closed union. Known values in
+  // practice: 'argo' | 'glider' | 'ctd' | 'bgc' | 'mooring' | 'adcp'.
+  type:         string
   lat:          number
   lon:          number
   time_start:   string | null

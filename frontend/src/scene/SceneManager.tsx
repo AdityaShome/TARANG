@@ -28,6 +28,7 @@ import { DepthSliceLayer } from './layers/DepthSliceLayer'
 import { VolumeLayer } from './layers/VolumeLayer'
 import { IsosurfaceLayer } from './layers/IsosurfaceLayer'
 import { InstrumentMarkerLayer } from './layers/InstrumentMarkerLayer'
+import { VectorLayer } from './layers/VectorLayer'
 
 interface SceneManagerProps {
   autoRotate?: boolean
@@ -293,6 +294,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     layerManager.addLayer('volume',     new VolumeLayer())
     layerManager.addLayer('isosurface', new IsosurfaceLayer())
     layerManager.addLayer('markers',    new InstrumentMarkerLayer())
+    layerManager.addLayer('vectors',    new VectorLayer())
 
     // (A hardcoded "Bay of Bengal region highlight ring" used to live here, always drawn
     // regardless of search state. Replaced by the boundary-box effect further down, which
@@ -349,17 +351,18 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       downPos = null
 
       const markerLayer = layerManagerRef.current?.getLayer('markers') as InstrumentMarkerLayer | undefined
-      const mesh = markerLayer?.getMesh?.()
-      if (!mesh) return
+      const meshes = markerLayer?.getMeshes?.()
+      if (!meshes || meshes.length === 0) return
 
       const rect = canvas.getBoundingClientRect()
       pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
 
       raycaster.setFromCamera(pointer, camera)
-      const hits = raycaster.intersectObject(mesh)
+      const hits = raycaster.intersectObjects(meshes)
       if (hits.length > 0 && hits[0].instanceId !== undefined) {
-        const platformId = markerLayer!.getPlatformIdAt(hits[0].instanceId)
+        const hitMesh = hits[0].object as THREE.InstancedMesh
+        const platformId = markerLayer!.getPlatformIdAt(hitMesh, hits[0].instanceId)
         if (platformId) useTarangStore.getState().setSelectedPlatform(platformId)
       }
     }
@@ -436,6 +439,11 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     if (layerVisibility['markers']) {
       const layer = layerManagerRef.current.getLayer('markers')
       if (layer) pending.push(layer.update({ bbox }))
+    }
+
+    if (layerVisibility['vectors']) {
+      const layer = layerManagerRef.current.getLayer('vectors')
+      if (layer) pending.push(layer.update({ bbox, timeIdx: activeTimeIdx, opacity: colormap.opacity }))
     }
 
     if (pending.length > 0) {

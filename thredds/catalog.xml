@@ -28,6 +28,13 @@
     <service name="http"  serviceType="HTTPServer"     base="/thredds/fileServer/"/>
   </service>
 
+  <!-- Maps the "netcdf/" URL prefix used by every urlPath below to where the files actually
+       are on disk (see docker-compose.yml's ./data/netcdf mount for this thredds service).
+       Without this, THREDDS has no way to resolve urlPath="netcdf/<file>" to a real file —
+       every OPeNDAP/WMS/WCS/NCSS request 404'd with "FileNotFound" regardless of whether the
+       file existed, because this mapping was simply never declared. -->
+  <datasetRoot path="netcdf" location="/usr/local/tomcat/content/thredds/public/netcdf/"/>
+
   <!-- ── Local pre-fetched NetCDF fixtures ───────────────────────────────── -->
   <dataset name="TARANG Local Datasets" ID="local">
 

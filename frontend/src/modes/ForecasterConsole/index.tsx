@@ -5,6 +5,8 @@ import { SearchBar } from '../../controls/SearchBar'
 import { useTarangStore } from '../../state/store'
 import { ProfilePopover } from '../../charts/ProfilePopover'
 import { Legend } from '../../components/Legend'
+import { LanguageSwitcher } from '../../components/LanguageSwitcher'
+import { useT } from '../../i18n/useT'
 
 /**
  * Forecaster Console — Power-user UI mode
@@ -16,6 +18,7 @@ import { Legend } from '../../components/Legend'
 export function ForecasterConsole() {
   const selectedPlatformId = useTarangStore(s => s.selectedPlatformId)
   const setUIMode          = useTarangStore(s => s.setUIMode)
+  const t = useT()
 
   return (
     <div id="forecaster-console" style={styles.container}>
@@ -27,8 +30,11 @@ export function ForecasterConsole() {
       {/* ── Control Sidebar ────────────────────────────────────────────── */}
       <aside id="control-panel" style={styles.sidebar}>
         <div style={styles.brandHeader}>
-          <span style={styles.brandText}>TARANG</span>
-          <span style={styles.brandSub}>Ocean Visualization</span>
+          <div style={styles.brandRow}>
+            <span style={styles.brandText}>TARANG</span>
+            <LanguageSwitcher />
+          </div>
+          <span style={styles.brandSub}>{t('brandSub')}</span>
         </div>
         <SearchBar />
         <ControlPanel />
@@ -39,7 +45,7 @@ export function ForecasterConsole() {
           style={styles.modeBtn}
           onClick={() => setUIMode('explorer')}
         >
-          ✦ Explorer Mode
+          ✦ {t('explorerModeBtn')}
         </button>
 
         {/* Attribution (§17 — dataset licensing) */}
@@ -89,6 +95,12 @@ const styles: Record<string, React.CSSProperties> = {
     display:       'flex',
     flexDirection: 'column',
     marginBottom:  '8px',
+  },
+  brandRow: {
+    display:        'flex',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    gap:            '8px',
   },
   brandText: {
     fontSize:      '22px',

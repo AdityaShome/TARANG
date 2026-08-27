@@ -27,6 +27,17 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type { UIMode, RenderMode, ColormapName, ColormapConfig, SourceEntry } from '../api/types'
+import type { LanguageCode } from '../i18n/translations'
+
+const LANGUAGE_STORAGE_KEY = 'tarang_language'
+
+function loadStoredLanguage(): LanguageCode {
+  try {
+    const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY)
+    if (stored === 'en' || stored === 'hi' || stored === 'bn' || stored === 'te' || stored === 'ta') return stored
+  } catch { /* localStorage unavailable (SSR/private mode) — fall through to default */ }
+  return 'en'
+}
 
 // ── Default values ────────────────────────────────────────────────────────────
 
@@ -48,6 +59,7 @@ const DEFAULT_COLORMAP: ColormapConfig = {
 interface TarangState {
   // UI
   uiMode:     UIMode
+  language:   LanguageCode
   isLoading:  boolean
   error:      string | null
   // Distinct from isLoading (which specifically gates the source-switch race in
@@ -88,6 +100,7 @@ interface TarangState {
 
   // ── Actions ───────────────────────────────────────────────────────────────
   setUIMode:           (mode: UIMode)          => void
+  setLanguage:         (lang: LanguageCode)    => void
   setActiveSource:     (id: string)            => void
   setActiveVar:        (variable: string)      => void
   setActiveDepthIdx:   (idx: number)           => void   // always an index, not meters
@@ -118,6 +131,7 @@ export const useTarangStore = create<TarangState>()(
   subscribeWithSelector((set, get) => ({
     // Defaults
     uiMode:              'console',
+    language:            loadStoredLanguage(),
     isLoading:           false,
     isFetchingLayers:    false,
     error:               null,
@@ -154,6 +168,10 @@ export const useTarangStore = create<TarangState>()(
 
     // ── Actions ───────────────────────────────────────────────────────────────
     setUIMode:           (mode)    => set({ uiMode: mode }),
+    setLanguage:         (lang)    => {
+      try { localStorage.setItem(LANGUAGE_STORAGE_KEY, lang) } catch { /* private mode — non-fatal */ }
+      set({ language: lang })
+    },
     // activeVar is cleared here (not just left stale) so it never briefly names a variable
     // that belongs to the PREVIOUS source. App.tsx's bootstrap effect re-fetches metadata for
     // the new source and calls setActiveVar once it knows the right name. Consumers (SceneManager,

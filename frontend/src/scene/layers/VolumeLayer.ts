@@ -5,6 +5,12 @@ import { useTarangStore } from '../../state/store'
 
 import vertShader from '../shaders/volumeVert.glsl?raw'
 import fragShader from '../shaders/volumeFrag_v2.glsl?raw'
+import type { ColormapName } from '../../api/types'
+
+// Must match the u_colormap branches in colormapFrag.glsl / volumeFrag_v2.glsl exactly.
+const COLORMAP_INDEX: Record<ColormapName, number> = {
+  viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
+}
 
 // Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ exactly — this layer places its
 // box mesh in the SAME spherical globe scene those build, not a standalone coordinate space.
@@ -41,7 +47,9 @@ export class VolumeLayer implements Layer {
         u_opacity: { value: 1.0 },
         u_missing: { value: 99999.0 },
         u_renderstyle: { value: 0 }, // 0 = MIP
-        u_iso_threshold: { value: 20.0 }
+        u_iso_threshold: { value: 20.0 },
+        u_colormap: { value: 0 },
+        u_log_scale: { value: 0 },
       },
       transparent: true,
       side: THREE.BackSide,
@@ -112,6 +120,8 @@ export class VolumeLayer implements Layer {
         const userClim = [state.colormap.min, state.colormap.max]
         this.material.uniforms.u_clim.value.set(userClim[0], userClim[1])
         this.material.uniforms.u_missing.value = header.missing_value
+        this.material.uniforms.u_colormap.value = COLORMAP_INDEX[state.colormap.name] ?? 0
+        this.material.uniforms.u_log_scale.value = state.colormap.logScale ? 1 : 0
 
         const widthDeg = header.bounds.lon[1] - header.bounds.lon[0]
         const heightDeg = header.bounds.lat[1] - header.bounds.lat[0]

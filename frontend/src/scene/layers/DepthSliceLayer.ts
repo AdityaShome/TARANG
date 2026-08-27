@@ -5,6 +5,12 @@ import { useTarangStore } from '../../state/store'
 
 import vertShader from '../shaders/depthSliceVert.glsl?raw'
 import fragShader from '../shaders/colormapFrag.glsl?raw'
+import type { ColormapName } from '../../api/types'
+
+// Must match the u_colormap branches in colormapFrag.glsl exactly.
+const COLORMAP_INDEX: Record<ColormapName, number> = {
+  viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
+}
 
 export class DepthSliceLayer implements Layer {
   private mesh: THREE.Mesh | null = null
@@ -26,7 +32,9 @@ export class DepthSliceLayer implements Layer {
         u_clim: { value: new THREE.Vector2(0, 1) },
         u_opacity: { value: 1.0 },
         u_missing: { value: 99999.0 },
-        u_bounds: { value: new THREE.Vector4(-180, 180, -90, 90) }
+        u_bounds: { value: new THREE.Vector4(-180, 180, -90, 90) },
+        u_colormap: { value: 0 },
+        u_log_scale: { value: 0 },
       },
       transparent: true,
       side: THREE.DoubleSide,
@@ -106,6 +114,8 @@ export class DepthSliceLayer implements Layer {
         const userClim = [state.colormap.min, state.colormap.max]
         this.material.uniforms.u_clim.value.set(userClim[0], userClim[1])
         this.material.uniforms.u_missing.value = header.missing_value
+        this.material.uniforms.u_colormap.value = COLORMAP_INDEX[state.colormap.name] ?? 0
+        this.material.uniforms.u_log_scale.value = state.colormap.logScale ? 1 : 0
         
         // Scale and position: assuming 1 scene unit = 1 degree
         const lonMin = header.bounds.lon[0]

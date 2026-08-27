@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react'
 import { useTarangStore } from '../state/store'
 import { geocodeRegion, GeocodeResult } from '../api/geocode'
+import { useT } from '../i18n/useT'
 
 /**
  * SearchBar — lets a researcher search for any sea/region by name instead of being
@@ -20,6 +21,7 @@ export function SearchBar() {
   const [error, setError]       = useState<string | null>(null)
   const [showResults, setShowResults] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
+  const t = useT()
 
   async function runSearch() {
     if (!query.trim()) return
@@ -32,7 +34,7 @@ export function SearchBar() {
     try {
       const found = await geocodeRegion(query.trim(), controller.signal)
       if (found.length === 0) {
-        setError(`No match for "${query}" — try a different name.`)
+        setError(t('noMatch', { query }))
         setResults([])
       } else if (found.length === 1) {
         pick(found[0])
@@ -42,7 +44,7 @@ export function SearchBar() {
       }
     } catch (e: unknown) {
       if ((e as Error).name !== 'AbortError') {
-        setError('Search failed — check your connection and try again.')
+        setError(t('searchFailed'))
       }
     } finally {
       setSearching(false)
@@ -61,7 +63,7 @@ export function SearchBar() {
         <input
           id="region-search-input"
           style={styles.input}
-          placeholder="Search a sea or region (e.g. Arabian Sea)…"
+          placeholder={t('searchPlaceholder')}
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') runSearch() }}
@@ -73,11 +75,10 @@ export function SearchBar() {
 
       {regionLabel
         ? <div style={styles.currentRegion}>📍 {regionLabel}</div>
-        : <div style={styles.noRegion}>No region selected — search above to load ocean data.</div>}
+        : <div style={styles.noRegion}>{t('noRegionSelected')}</div>}
       {isFetchingLayers && (
         <div style={styles.fetching}>
-          ⏳ Fetching ocean data for this region… first-time searches outside the Bay of Bengal
-          pull live from Copernicus Marine and can take up to a minute.
+          ⏳ {t('fetchingData')}
         </div>
       )}
       {error && <div style={styles.error}>{error}</div>}

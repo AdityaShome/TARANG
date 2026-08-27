@@ -36,6 +36,10 @@ scikit-image>=0.24.0  # measure.marching_cubes (method='lewiner' default)
 zarr>=2.18.0          # Option B: chunked Zarr store + Option A: local cache
 watchdog>=4.0.0          # filesystem-watch hot-reload of YAML manifests
 Pillow>=10.0.0            # PNG tile generation for hand-rolled WMS (Option B)
+matplotlib>=3.8.0         # named colormaps (viridis/plasma/...) for hand-rolled WMS GetMap —
+                           # was imported but never actually installed, so cm.get_cmap() always
+                           # raised ModuleNotFoundError and every WMS tile silently fell back to
+                           # flat grayscale instead of the requested/configured colormap
 cftime>=1.6.0         # decode HYCOM times
 
 # ── Copernicus Marine (optional — heavy: pulls boto3/pyarrow/dask/pystac) ─────
