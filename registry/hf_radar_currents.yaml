@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TARANG Plugin Registry — HF-Radar Surface Currents
+# ─────────────────────────────────────────────────────────────────────────────
+# Demonstrates the "Extensible Design" requirement's named sensor types (moorings,
+# HF-radar, ADCP) with a genuinely different DATA SHAPE from every other registered
+# source: a 2D vector field (u, v components), not a scalar. Both components live as
+# separate data variables in ONE NetCDF file — NetCDFAdapter.get_metadata() already
+# lists every data_var generically, so /api/slice?var=current_u and ...&var=current_v
+# both work through the existing endpoint with ZERO backend code changes. The
+# frontend's VectorLayer (wired to the "Vectors" layer checkbox — previously present
+# in the UI but never connected to anything) fetches both and renders arrow glyphs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+id: hf_radar_currents
+label: "HF-Radar — Surface Currents (Demo)"
+description: "Synthetic surface current vectors standing in for a real coastal HF-radar network (e.g. INCOIS's east-coast array). Models a simplified East India Coastal Current + basin gyre — see generate_hf_radar_fixture.py."
+
+adapter: NetCDFAdapter
+source: "http://thredds:8080/thredds/dodsC/netcdf/hf_radar_currents.nc"
+local_cache: "data/netcdf/hf_radar_currents.nc"
+variable: current_u
+variable_v: current_v   # companion northward component — read directly by VectorLayer.ts
+standard_name: eastward_sea_water_velocity
+long_name: "Eastward Surface Current Velocity"
+units: "m s-1"
+valid_min: -2.0
+valid_max: 2.0
+missing_value: -30000.0
+
+colormap: jet
+render_type: vector
+
+depth_levels:
+  - 0
+
+default_bbox: [80, 5, 100, 25]

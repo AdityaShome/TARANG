@@ -1,5 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { useTarangStore, debounce } from '../state/store'
+import { useT } from '../i18n/useT'
+import type { TranslationKey } from '../i18n/translations'
 
 /**
  * ControlPanel — Container for all Forecaster Console controls.
@@ -16,6 +18,7 @@ export function ControlPanel() {
     colormap, setColormap, setColormapName,
     layerVisibility, toggleLayer,
   } = useTarangStore()
+  const t = useT()
 
   // Debounced depth/time slider handlers (150ms — §10)
   const debouncedDepth = useMemo(() => debounce(setActiveDepthIdx, 150), [])
@@ -40,7 +43,7 @@ export function ControlPanel() {
     <div id="control-panel-inner" style={styles.panel}>
 
       {/* ── Source Selector ─────────────────────────────────────────── */}
-      <Section label="Data Source">
+      <Section label={t('dataSource')}>
         <Select
           id="source-select"
           value={activeSourceId}
@@ -50,7 +53,7 @@ export function ControlPanel() {
       </Section>
 
       {/* ── Variable Selector ───────────────────────────────────────── */}
-      <Section label="Variable">
+      <Section label={t('variable')}>
         <Select
           id="var-select"
           value={activeVar}
@@ -60,7 +63,7 @@ export function ControlPanel() {
       </Section>
 
       {/* ── Render Mode ─────────────────────────────────────────────── */}
-      <Section label="Render Mode">
+      <Section label={t('renderMode')}>
         <div style={styles.toggleGroup}>
           {(['slice', 'volume', 'isosurface'] as const).map(mode => (
             <button
@@ -69,13 +72,13 @@ export function ControlPanel() {
               style={{ ...styles.toggle, ...(renderMode === mode ? styles.toggleActive : {}) }}
               onClick={() => setRenderMode(mode)}
             >
-              {mode === 'slice' ? '⬜ Slice' : mode === 'volume' ? '🧊 Volume' : '🔵 Iso'}
+              {mode === 'slice' ? `⬜ ${t('modeSlice')}` : mode === 'volume' ? `🧊 ${t('modeVolume')}` : `🔵 ${t('modeIso')}`}
             </button>
           ))}
         </div>
         {renderMode === 'isosurface' && (
           <LabeledInput
-            label={`Threshold: ${isoThreshold.toFixed(1)}`}
+            label={`${t('threshold')}: ${isoThreshold.toFixed(1)}`}
             id="iso-threshold"
             type="range"
             min={colormap.min}
@@ -88,7 +91,7 @@ export function ControlPanel() {
       </Section>
 
       {/* ── Depth Slider ─────────────────────────────────────────────── */}
-      <Section label={`Depth: ${activeDepthM} m`}>
+      <Section label={`${t('depth')}: ${activeDepthM} m`}>
         {/* Slider indexes into depth_levels[], never raw meters (§20 Rule 4) */}
         <input
           id="depth-slider"
@@ -107,7 +110,7 @@ export function ControlPanel() {
       </Section>
 
       {/* ── Time Slider ──────────────────────────────────────────────── */}
-      <Section label={`Time Step: ${timeSteps[activeTimeIdx] ?? 'T+0'}`}>
+      <Section label={`${t('timeStep')}: ${timeSteps[activeTimeIdx] ?? 'T+0'}`}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <button 
             onClick={() => setIsPlaying(!isPlaying)}
@@ -129,7 +132,7 @@ export function ControlPanel() {
       </Section>
 
       {/* ── Colormap ─────────────────────────────────────────────────── */}
-      <Section label="Colormap">
+      <Section label={t('colormap')}>
         <Select
           id="colormap-select"
           value={colormap.name}
@@ -142,9 +145,19 @@ export function ControlPanel() {
             { value: 'jet',     label: 'Jet'     },
           ]}
         />
+        <label style={styles.checkRow}>
+          <input
+            id="log-scale-toggle"
+            type="checkbox"
+            checked={colormap.logScale}
+            onChange={() => setColormap({ logScale: !colormap.logScale })}
+            style={{ accentColor: '#00d4ff' }}
+          />
+          <span style={{ color: '#a0c4e8', fontSize: '13px' }}>{t('logScale')}</span>
+        </label>
         <div style={styles.row}>
           <LabeledInput
-            label={`Min: ${colormap.min.toFixed(1)}`}
+            label={`${t('min')}: ${colormap.min.toFixed(1)}`}
             id="colormap-min"
             type="range"
             min={-5} max={colormap.max} step={0.5}
@@ -152,7 +165,7 @@ export function ControlPanel() {
             onChange={e => setColormap({ min: Number(e.target.value) })}
           />
           <LabeledInput
-            label={`Max: ${colormap.max.toFixed(1)}`}
+            label={`${t('max')}: ${colormap.max.toFixed(1)}`}
             id="colormap-max"
             type="range"
             min={colormap.min} max={45} step={0.5}
@@ -161,7 +174,7 @@ export function ControlPanel() {
           />
         </div>
         <LabeledInput
-          label={`Opacity: ${(colormap.opacity * 100).toFixed(0)}%`}
+          label={`${t('opacity')}: ${(colormap.opacity * 100).toFixed(0)}%`}
           id="opacity-slider"
           type="range"
           min={0.1} max={1} step={0.05}
@@ -169,7 +182,7 @@ export function ControlPanel() {
           onChange={e => setColormap({ opacity: Number(e.target.value) })}
         />
         <LabeledInput
-          label={`Vert. Exaggeration: ${colormap.verticalExaggeration}×`}
+          label={`${t('vertExaggeration')}: ${colormap.verticalExaggeration}×`}
           id="vert-exag-slider"
           type="range"
           min={1} max={200} step={5}
@@ -179,7 +192,7 @@ export function ControlPanel() {
       </Section>
 
       {/* ── Layer Visibility ─────────────────────────────────────────── */}
-      <Section label="Layers">
+      <Section label={t('layers')}>
         {Object.entries(layerVisibility).map(([id, visible]) => (
           <label key={id} style={styles.checkRow}>
             <input
@@ -190,7 +203,7 @@ export function ControlPanel() {
               style={{ accentColor: '#00d4ff' }}
             />
             <span style={{ color: '#a0c4e8', fontSize: '13px', textTransform: 'capitalize' }}>
-              {id}
+              {t(`layer${id.charAt(0).toUpperCase()}${id.slice(1)}` as TranslationKey)}
             </span>
           </label>
         ))}
@@ -242,7 +255,7 @@ const styles: Record<string, React.CSSProperties> = {
   sliderLabels: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'rgba(160, 196, 232, 0.5)', marginTop: '2px' },
   toggleGroup: { display: 'flex', gap: '4px' },
   toggle:      { flex: 1, padding: '6px 4px', background: 'rgba(0, 30, 60, 0.6)', border: '1px solid rgba(0, 180, 255, 0.2)', borderRadius: '6px', color: '#a0c4e8', cursor: 'pointer', fontSize: '12px', fontWeight: '500' },
-  toggleActive: { background: 'rgba(0, 180, 255, 0.2)', borderColor: '#00d4ff', color: '#00d4ff' },
+  toggleActive: { background: 'rgba(0, 180, 255, 0.2)', border: '1px solid #00d4ff', color: '#00d4ff' },
   row:         { display: 'flex', gap: '8px' },
   checkRow:    { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' },
   inputLabel:  { fontSize: '11px', color: 'rgba(160, 196, 232, 0.6)', marginBottom: '4px' },

@@ -119,10 +119,11 @@ async def get_isosurface(
             **vol_result.meta.to_header_dict(),
             "threshold": threshold,
             "time": vol_result.time_str,
-            # Grid shape marching_cubes ran over — verts are in (depth, lat, lon)
-            # index space, so the frontend needs these to scale them to physical
-            # units (§8.5). volume may have been downsampled — use its actual shape.
-            "volume_shape": list(volume.shape),
+            # marching_cubes verts are in VOXEL INDEX space (0..shape[i]-1 per axis) — the
+            # frontend needs the actual array shape it ran on (which may be downsampled from
+            # the raw depth_levels count, see NetCDFAdapter._downsample_volume) to scale verts
+            # back into real degree/metre space.
+            "volume_shape": list(volume.shape),  # (depth, lat, lon)
         }
         return _build_isosurface_binary(verts, faces, normals, header)
 

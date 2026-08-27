@@ -68,6 +68,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - COPERNICUS_USERNAME=${COPERNICUS_USERNAME:-}
       - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
+      - OPTION_B_MODE=${OPTION_B_MODE:-true}
     depends_on:
       postgis:
         condition: service_healthy

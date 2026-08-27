@@ -23,10 +23,12 @@ import { LayerManager } from './LayerManager'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { DepthSliceLayer } from './layers/DepthSliceLayer'
 import { VolumeLayer } from './layers/VolumeLayer'
 import { IsosurfaceLayer } from './layers/IsosurfaceLayer'
 import { InstrumentMarkerLayer } from './layers/InstrumentMarkerLayer'
+import { VectorLayer } from './layers/VectorLayer'
 
 interface SceneManagerProps {
   autoRotate?: boolean
@@ -34,8 +36,13 @@ interface SceneManagerProps {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const EARTH_RADIUS = 200
-const BOB_LAT_C    = 15   // deg — centre of Bay of Bengal
-const BOB_LON_C    = 90   // deg
+// Initial camera framing on load, BEFORE any region is searched — deliberately not centred
+// tightly on any one sea (there is no default region; see hasSearchedRegion in store.ts).
+// A wide, pulled-back view of the broader Indian Ocean invites a search instead of implying
+// "this is the region," which a closer BoB-centred view used to.
+const INITIAL_VIEW_LAT = 5
+const INITIAL_VIEW_LON = 65
+const INITIAL_VIEW_DISTANCE_MULT = 4
 
 // Convert lat/lon to 3D point on sphere
 function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 {
@@ -89,7 +96,7 @@ varying vec3 vPosition;
 void main() {
   vec3 dayColor = texture2D(tDay, vUv).rgb;
   vec3 nightColor = texture2D(tNight, vUv).rgb;
-  
+
   // If textures failed to load, fall back to a procedural deep ocean color
   if (length(dayColor) < 0.01) {
       dayColor = vec3(0.01, 0.15, 0.4);
@@ -132,7 +139,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
   const rafRef          = useRef<number>(0)
   const layerManagerRef = useRef<LayerManager | null>(null)
   const earthRef        = useRef<THREE.Mesh | null>(null)
-  const particlesRef    = useRef<THREE.Points | null>(null)
+  const boundaryRef     = useRef<THREE.Line | null>(null)
   const clockRef        = useRef(new THREE.Clock())
 
   const activeSourceId  = useTarangStore(s => s.activeSourceId)
@@ -143,6 +150,10 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
   const colormap        = useTarangStore(s => s.colormap)
   const bbox            = useTarangStore(s => s.bbox)
   const layerVisibility = useTarangStore(s => s.layerVisibility)
+  const isLoading       = useTarangStore(s => s.isLoading)
+  const flyToTarget     = useTarangStore(s => s.flyToTarget)
+  const clearFlyToTarget = useTarangStore(s => s.clearFlyToTarget)
+  const hasSearchedRegion = useTarangStore(s => s.hasSearchedRegion)
 
   // ── Mount: build the entire scene ──────────────────────────────────────────
   useEffect(() => {
@@ -165,9 +176,9 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     const scene = new THREE.Scene()
     sceneRef.current = scene
 
-    // ── Camera — aimed at Bay of Bengal ───────────────────────────────────
+    // ── Camera — wide initial view; see INITIAL_VIEW_* comment above ──────
     const camera = new THREE.PerspectiveCamera(45, w / h, 1, 5000)
-    const camTarget = latLonToXYZ(BOB_LAT_C, BOB_LON_C, EARTH_RADIUS * 2.4)
+    const camTarget = latLonToXYZ(INITIAL_VIEW_LAT, INITIAL_VIEW_LON, EARTH_RADIUS * INITIAL_VIEW_DISTANCE_MULT)
     camera.position.copy(camTarget)
     camera.lookAt(0, 0, 0)
     cameraRef.current = camera
@@ -176,11 +187,22 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     const composer = new EffectComposer(renderer)
     const renderScene = new RenderPass(scene, camera)
     const bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 1.5, 0.4, 0.85)
-    bloomPass.threshold = 0.95
-    bloomPass.strength = 1.0
-    bloomPass.radius = 0.8
+    // Kept tight on purpose: UnrealBloomPass has a soft knee below `threshold`, so a wide
+    // `radius` still spreads glow from content that doesn't fully clear it — over a large
+    // filled bright area (the data slice/volume) that reads as an oversized, washed-out halo
+    // rather than a crisp gradient. Reserve bloom for small genuinely-HDR points (particles).
+    bloomPass.threshold = 1.0
+    bloomPass.strength = 0.6
+    bloomPass.radius = 0.3
     composer.addPass(renderScene)
     composer.addPass(bloomPass)
+    // EffectComposer renders into its own chain of render targets — the renderer's
+    // toneMapping/outputColorSpace settings above only apply automatically when rendering
+    // straight to the canvas, NOT through the composer. Without this pass as the final step,
+    // raw HDR values get written close to directly to the screen, and exactly how out-of-range
+    // (>1.0) values get clamped there is GPU/driver-dependent — this is why bloom (and the HDR
+    // particle/data colors) can look wildly different, or blow out globally, across machines.
+    composer.addPass(new OutputPass())
 
     // ── Controls ──────────────────────────────────────────────────────────
     const controls = new OrbitControls(camera, canvas)
@@ -224,12 +246,9 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     // Load NASA Blue Marble (Day) and Night lights from local public directory
     texLoader.load(
       '/earth-blue-marble.jpg',
-      (tex) => { 
+      (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
-        earthMat.uniforms.tDay.value = tex; 
-        if (particlesRef.current) {
-            (particlesRef.current.material as THREE.ShaderMaterial).uniforms.tDay.value = tex;
-        }
+        earthMat.uniforms.tDay.value = tex;
         earthMat.needsUpdate = true;
       }
     )
@@ -254,102 +273,9 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     })
     scene.add(new THREE.Mesh(atmGeo, atmMat))
 
-    // ── Lat/Lon grid over Indian Ocean ────────────────────────────────────
-    const gridMat = new THREE.LineBasicMaterial({
-      color: 0x00d4ff, transparent: true, opacity: 0.08, depthWrite: false,
-    })
-    // Draw parallels 0° to 30°N every 5°
-    for (let lat = 0; lat <= 30; lat += 5) {
-      const pts: THREE.Vector3[] = []
-      for (let lon = 60; lon <= 110; lon += 2) {
-        pts.push(latLonToXYZ(lat, lon, EARTH_RADIUS * 1.001))
-      }
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), gridMat))
-    }
-    // Draw meridians 60° to 110°E every 5°
-    for (let lon = 60; lon <= 110; lon += 5) {
-      const pts: THREE.Vector3[] = []
-      for (let lat = -5; lat <= 35; lat += 2) {
-        pts.push(latLonToXYZ(lat, lon, EARTH_RADIUS * 1.001))
-      }
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), gridMat))
-    }
-
-    // ── Animated ocean current particles over Bay of Bengal ───────────────
-    const N_PARTICLES = 15000 // Massive increase for jaw-dropping effect
-    const pGeo = new THREE.BufferGeometry()
-    const pPos = new Float32Array(N_PARTICLES * 3)
-    const pVel = new Float32Array(N_PARTICLES * 3)
-    for (let i = 0; i < N_PARTICLES; i++) {
-      const lat = -10 + Math.random() * 40   // Indian Ocean spread
-      const lon = 50 + Math.random() * 60    // Indian Ocean spread
-      const v   = latLonToXYZ(lat, lon, EARTH_RADIUS * 1.002)
-      pPos[i*3]   = v.x
-      pPos[i*3+1] = v.y
-      pPos[i*3+2] = v.z
-      // Velocity flow field based on latitude
-      pVel[i*3]   = (Math.random() - 0.5) * 0.5
-      pVel[i*3+1] = (Math.random() - 0.5) * 0.5
-      pVel[i*3+2] = (Math.random() - 0.5) * 0.5
-    }
-    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3))
-    // Store velocity in normal attribute for shader access
-    pGeo.setAttribute('normal', new THREE.BufferAttribute(pVel, 3))
-    
-    // Custom ShaderMaterial to mask out land using tDay
-    const particleVert = `
-      attribute vec3 normal; // velocity
-      varying vec2 vUv;
-      void main() {
-        // Calculate spherical UV based on position
-        vec3 n = normalize(position);
-        float u = 0.5 + atan(n.z, n.x) / (2.0 * 3.14159265);
-        float v = 0.5 - asin(n.y) / 3.14159265;
-        vUv = vec2(u, v);
-        
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = 4.0 * (1000.0 / -mvPosition.z); // Increased base size from 2.0 to 4.0
-        gl_Position = projectionMatrix * mvPosition;
-      }
-    `;
-    const particleFrag = `
-      uniform sampler2D tDay;
-      varying vec2 vUv;
-      void main() {
-        // Sample earth texture to see if this is land or ocean
-        vec3 texColor = texture2D(tDay, vUv).rgb;
-        
-        // Simple heuristic: oceans are dark blue, land is brighter and has more red/green
-        // If it's bright or red > blue, it's land. Discard!
-        float brightness = length(texColor);
-        if (brightness > 0.4 || texColor.r > texColor.b) {
-            discard; // It's land or bright clouds!
-        }
-        
-        // Circular particle
-        vec2 pt = gl_PointCoord - vec2(0.5);
-        if (dot(pt, pt) > 0.25) discard;
-        
-        // HDR color for bloom - make it very bright
-        gl_FragColor = vec4(0.0, 3.0, 4.0, 1.0);
-      }
-    `;
-
-    const pMat = new THREE.ShaderMaterial({
-      vertexShader: particleVert,
-      fragmentShader: particleFrag,
-      uniforms: {
-        tDay: { value: null } // We will assign this when tDay loads
-      },
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    })
-    
-    const pMesh = new THREE.Points(pGeo, pMat)
-    pMesh.userData.velocities = pVel
-    scene.add(pMesh)
-    particlesRef.current = pMesh
+    // (The static Indian-Ocean-only reference grid that used to live here was replaced by a
+    // boundary box that tracks whatever region is actually searched — see the `bbox`-keyed
+    // effect below. A grid fixed to one ocean stopped making sense once search is global.)
 
     // ── Lighting ──────────────────────────────────────────────────────────
     scene.add(new THREE.AmbientLight(0xffffff, 1.8))
@@ -368,55 +294,23 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     layerManager.addLayer('volume',     new VolumeLayer())
     layerManager.addLayer('isosurface', new IsosurfaceLayer())
     layerManager.addLayer('markers',    new InstrumentMarkerLayer())
+    layerManager.addLayer('vectors',    new VectorLayer())
 
-    // ── BOB region highlight ring ──────────────────────────────────────────
-    // Glowing ring showing the Bay of Bengal study area
-    const ringPts: THREE.Vector3[] = []
-    const ringLats = [5, 5, 25, 25, 5]
-    const ringLons = [80, 100, 100, 80, 80]
-    for (let i = 0; i < ringLats.length; i++) {
-      const steps = 30
-      if (i < ringLats.length - 1) {
-        for (let s = 0; s <= steps; s++) {
-          const t = s / steps
-          const lat = ringLats[i] + (ringLats[i+1] - ringLats[i]) * t
-          const lon = ringLons[i] + (ringLons[i+1] - ringLons[i]) * t
-          ringPts.push(latLonToXYZ(lat, lon, EARTH_RADIUS * 1.003))
-        }
-      }
-    }
-    const ringMat = new THREE.LineBasicMaterial({
-      color: 0x00d4ff, transparent: true, opacity: 0.5,
-    })
-    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), ringMat))
+    // (A hardcoded "Bay of Bengal region highlight ring" used to live here, always drawn
+    // regardless of search state. Replaced by the boundary-box effect further down, which
+    // tracks whatever region is actually searched and draws nothing until then.)
 
     // ── Render loop ───────────────────────────────────────────────────────
     function animate() {
       rafRef.current = requestAnimationFrame(animate)
       const elapsed = clockRef.current.getElapsedTime()
 
-      // Slow Earth rotation
-      if (earthRef.current) {
+      // Slow Earth rotation — only in Explorer Mode's cinematic flythrough (autoRotate=true).
+      // The Forecaster Console (autoRotate=false, the default) needs a STILL globe: a
+      // researcher searching a region and inspecting it doesn't want the ground moving
+      // under them a second later.
+      if (earthRef.current && autoRotate) {
         earthRef.current.rotation.y = elapsed * 0.015
-      }
-
-      // Animate particles (drift on sphere surface)
-      if (particlesRef.current) {
-        const pos = (particlesRef.current.geometry.attributes.position as THREE.BufferAttribute)
-        const vel = particlesRef.current.userData.velocities as Float32Array
-        for (let i = 0; i < N_PARTICLES; i++) {
-          let x = pos.array[i*3]     + vel[i*3]   * 0.3
-          let y = pos.array[i*3+1]   + vel[i*3+1] * 0.3
-          let z = pos.array[i*3+2]   + vel[i*3+2] * 0.3
-          // Re-project onto sphere surface
-          const len = Math.sqrt(x*x + y*y + z*z)
-          const r   = EARTH_RADIUS * 1.002
-          x = (x/len)*r; y = (y/len)*r; z = (z/len)*r
-          ;(pos.array as Float32Array)[i*3]   = x
-          ;(pos.array as Float32Array)[i*3+1] = y
-          ;(pos.array as Float32Array)[i*3+2] = z
-        }
-        pos.needsUpdate = true
       }
 
       controlsRef.current?.update()
@@ -435,9 +329,52 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     })
     ro.observe(canvas)
 
+    // ── Click-to-inspect an instrument marker ───────────────────────────────
+    // InstrumentMarkerLayer already exposes getMesh()/getPlatformIdAt() for exactly this, but
+    // nothing ever called them — clicking a float marker did nothing. Raycast against the
+    // markers' InstancedMesh; ForecasterConsole already renders <ProfilePopover> whenever
+    // selectedPlatformId is set, so setting it here is the only missing piece.
+    const raycaster = new THREE.Raycaster()
+    const pointer = new THREE.Vector2()
+    let downPos: { x: number; y: number } | null = null
+
+    function onPointerDown(e: PointerEvent) {
+      downPos = { x: e.clientX, y: e.clientY }
+    }
+
+    function onPointerUp(e: PointerEvent) {
+      // Ignore drags (camera orbit) — only treat as a click if the pointer barely moved.
+      if (!downPos || Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 4) {
+        downPos = null
+        return
+      }
+      downPos = null
+
+      const markerLayer = layerManagerRef.current?.getLayer('markers') as InstrumentMarkerLayer | undefined
+      const meshes = markerLayer?.getMeshes?.()
+      if (!meshes || meshes.length === 0) return
+
+      const rect = canvas.getBoundingClientRect()
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+
+      raycaster.setFromCamera(pointer, camera)
+      const hits = raycaster.intersectObjects(meshes)
+      if (hits.length > 0 && hits[0].instanceId !== undefined) {
+        const hitMesh = hits[0].object as THREE.InstancedMesh
+        const platformId = markerLayer!.getPlatformIdAt(hitMesh, hits[0].instanceId)
+        if (platformId) useTarangStore.getState().setSelectedPlatform(platformId)
+      }
+    }
+
+    canvas.addEventListener('pointerdown', onPointerDown)
+    canvas.addEventListener('pointerup', onPointerUp)
+
     return () => {
       cancelAnimationFrame(rafRef.current)
       ro.disconnect()
+      canvas.removeEventListener('pointerdown', onPointerDown)
+      canvas.removeEventListener('pointerup', onPointerUp)
       controls.dispose()
       renderer.dispose()
       layerManager.disposeAll()
@@ -447,48 +384,125 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
   // ── Update data layers on store changes ────────────────────────────────────
   useEffect(() => {
     if (!layerManagerRef.current) return
+    // store.setActiveSource() clears activeVar synchronously so it can never name a variable
+    // belonging to the PREVIOUS source. App.tsx's bootstrap effect re-fetches metadata and
+    // calls setActiveVar once it knows the right name for the new source — until then, skip
+    // firing layer requests (otherwise we ask the new source for a variable it doesn't have
+    // and the backend 500s).
+    // No default sea — nothing renders until the researcher actually searches a region.
+    if (!hasSearchedRegion) return
+    if (!activeVar || isLoading) return
+
+    // Collected so a search/region change can show real "still fetching" feedback (e.g. a live,
+    // uncached Copernicus region search can take tens of seconds) instead of the UI just
+    // guessing when to stop showing a spinner. Deliberately NOT read/set through the `isLoading`
+    // flag this effect also guards on above — toggling that here would make the effect re-fire
+    // itself (isLoading is one of its own deps) and re-request the same data twice.
+    const pending: Promise<void>[] = []
 
     if (layerVisibility['slice'] && renderMode === 'slice') {
       const layer = layerManagerRef.current.getLayer('slice')
       if (layer) {
         const depthLevels = useTarangStore.getState().depthLevels
         const activeDepthM = depthLevels[activeDepthIdx] ?? 0
-        layer.update({
+        pending.push(layer.update({
           source: activeSourceId, variable: activeVar,
           timeIdx: activeTimeIdx, depthIdx: activeDepthM,
           bbox, clim: [colormap.min, colormap.max],
           colormap: colormap.name, opacity: colormap.opacity,
-        })
+        }))
       }
     }
 
     if (layerVisibility['volume'] && renderMode === 'volume') {
       const layer = layerManagerRef.current.getLayer('volume')
       if (layer) {
-        layer.update({
+        pending.push(layer.update({
           source: activeSourceId, variable: activeVar,
           timeIdx: activeTimeIdx, bbox,
           clim: [colormap.min, colormap.max],
           colormap: colormap.name, opacity: colormap.opacity,
-        })
+        }))
       }
     }
 
     if (layerVisibility['isosurface'] && renderMode === 'isosurface') {
       const layer = layerManagerRef.current.getLayer('isosurface')
       if (layer) {
-        layer.update({
+        pending.push(layer.update({
           source: activeSourceId, variable: activeVar,
           timeIdx: activeTimeIdx, bbox, opacity: colormap.opacity,
-        })
+        }))
       }
     }
 
     if (layerVisibility['markers']) {
       const layer = layerManagerRef.current.getLayer('markers')
-      if (layer) layer.update({ bbox })
+      if (layer) pending.push(layer.update({ bbox }))
     }
-  }, [renderMode, activeSourceId, activeVar, activeTimeIdx, activeDepthIdx, bbox, colormap, layerVisibility])
+
+    if (layerVisibility['vectors']) {
+      const layer = layerManagerRef.current.getLayer('vectors')
+      if (layer) pending.push(layer.update({ bbox, timeIdx: activeTimeIdx, opacity: colormap.opacity }))
+    }
+
+    if (pending.length > 0) {
+      useTarangStore.getState().setFetchingLayers(true)
+      Promise.allSettled(pending).finally(() => useTarangStore.getState().setFetchingLayers(false))
+    }
+  }, [renderMode, activeSourceId, activeVar, activeTimeIdx, activeDepthIdx, bbox, colormap, layerVisibility, isLoading, hasSearchedRegion])
+
+  // ── Region search: fly the camera to the searched location ─────────────────
+  useEffect(() => {
+    if (!flyToTarget || !cameraRef.current || !controlsRef.current) return
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+
+    // Keep the current zoom distance — only change WHERE we're looking, matching how the
+    // camera was originally aimed at BOB_LAT_C/BOB_LON_C on mount (see camTarget above).
+    const distance = camera.position.length() || EARTH_RADIUS * 2.4
+    const newPos = latLonToXYZ(flyToTarget.lat, flyToTarget.lon, distance)
+    camera.position.copy(newPos)
+    controls.target.set(0, 0, 0)
+    controls.update()
+
+    clearFlyToTarget()
+  }, [flyToTarget, clearFlyToTarget])
+
+  // ── Draw a boundary outline around the current search region ───────────────
+  useEffect(() => {
+    if (!sceneRef.current) return
+    const scene = sceneRef.current
+
+    if (boundaryRef.current) {
+      scene.remove(boundaryRef.current)
+      boundaryRef.current.geometry.dispose()
+      ;(boundaryRef.current.material as THREE.Material).dispose()
+      boundaryRef.current = null
+    }
+
+    // No default sea — don't draw a box around the placeholder bbox before any search.
+    if (!hasSearchedRegion) return
+
+    const [minLon, minLat, maxLon, maxLat] = bbox
+    const r = EARTH_RADIUS * 1.006  // clear of the depth-slice layer (1.0025) and grid lines
+    const pts: THREE.Vector3[] = []
+    const STEP = 1 // degrees — dense enough that the box reads as a curve, not a polygon
+    for (let lon = minLon; lon <= maxLon; lon += STEP) pts.push(latLonToXYZ(minLat, lon, r))
+    pts.push(latLonToXYZ(minLat, maxLon, r))
+    for (let lat = minLat; lat <= maxLat; lat += STEP) pts.push(latLonToXYZ(lat, maxLon, r))
+    pts.push(latLonToXYZ(maxLat, maxLon, r))
+    for (let lon = maxLon; lon >= minLon; lon -= STEP) pts.push(latLonToXYZ(maxLat, lon, r))
+    pts.push(latLonToXYZ(maxLat, minLon, r))
+    for (let lat = maxLat; lat >= minLat; lat -= STEP) pts.push(latLonToXYZ(lat, minLon, r))
+    pts.push(latLonToXYZ(minLat, minLon, r))
+
+    const geo = new THREE.BufferGeometry().setFromPoints(pts)
+    const mat = new THREE.LineBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.6 })
+    const line = new THREE.Line(geo, mat)
+    scene.add(line)
+    boundaryRef.current = line
+  }, [bbox, hasSearchedRegion])
 
   return (
     <canvas

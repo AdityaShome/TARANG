@@ -15,6 +15,10 @@ python-multipart==0.0.9
 xarray==2025.7.0
 netCDF4>=1.6,<2.0
 h5netcdf>=1.8,<2.0
+h5py>=3.10.0           # h5netcdf's own dependency resolution didn't pull this into the image;
+                       # copernicusmarine.subset() needs it directly too (fails at runtime with
+                       # "No module named 'h5py'" otherwise — only surfaces on a live region
+                       # search, since that's the only codepath that writes/reads via h5py)
 scipy>=1.13.0         # fallback xarray engine; also used for interpolation
 pydap>=3.4.0          # pure-OPeNDAP backend for xarray.open_dataset
 siphon==0.9.0         # THREDDS catalog browsing
@@ -32,6 +36,10 @@ scikit-image>=0.24.0  # measure.marching_cubes (method='lewiner' default)
 zarr>=2.18.0          # Option B: chunked Zarr store + Option A: local cache
 watchdog>=4.0.0          # filesystem-watch hot-reload of YAML manifests
 Pillow>=10.0.0            # PNG tile generation for hand-rolled WMS (Option B)
+matplotlib>=3.8.0         # named colormaps (viridis/plasma/...) for hand-rolled WMS GetMap —
+                           # was imported but never actually installed, so cm.get_cmap() always
+                           # raised ModuleNotFoundError and every WMS tile silently fell back to
+                           # flat grayscale instead of the requested/configured colormap
 cftime>=1.6.0         # decode HYCOM times
 
 # ── Copernicus Marine (optional — heavy: pulls boto3/pyarrow/dask/pystac) ─────

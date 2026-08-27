@@ -113,11 +113,14 @@ def _apply_colormap(data: np.ndarray, vmin: float, vmax: float, cmap_name: str =
     NaN values become transparent (alpha=0).
     """
     try:
-        import matplotlib.cm as cm
-        import matplotlib.colors as mcolors
-        cmap = cm.get_cmap(cmap_name)
-    except Exception:
-        # Fallback: grayscale
+        import matplotlib
+        # matplotlib.cm.get_cmap() was deprecated in 3.7 and removed in 3.9+; matplotlib itself
+        # wasn't even installed in this image until now (see requirements.txt), so this whole
+        # path was silently falling back to grayscale for every WMS tile regardless of which
+        # exception would have hit here. matplotlib.colormaps[name] is the current stable API.
+        cmap = matplotlib.colormaps[cmap_name]
+    except Exception as e:
+        logger.warning(f"Colormap '{cmap_name}' unavailable ({e}) — falling back to grayscale")
         cmap = None
 
     norm_data = np.clip((data - vmin) / max(vmax - vmin, 1e-9), 0.0, 1.0)
@@ -249,16 +252,23 @@ async def _get_map(
     # Get a 2D lat×lon slice from the adapter
     try:
         meta = adapter.get_metadata()
-        time_idx  = 0  # default: latest available time step
-        depth_idx = 0  # default: surface (0 m)
+        time_idx = 0  # default: latest available time step
+        depth_m  = 0.0  # default: surface
 
-        depth_levels = meta.get("depth_levels", [0])
-        if elevation is not None and depth_levels:
-            # Snap to nearest available depth level
-            depth_idx = int(np.argmin(np.abs(np.array(depth_levels) - elevation)))
+        depth_levels = meta.get("depth_levels") or [0]
+        if elevation is not None:
+            depth_m = elevation
+        else:
+            depth_m = depth_levels[0]
 
-        # Pull a 2D slice
-        data_2d = adapter.get_slice(time_idx=time_idx, depth_idx=depth_idx)
+        variable = meta["available_variables"][0]
+
+        # get_slice(variable, depth_m, time_idx, bbox) — NOT (time_idx=, depth_idx=): that
+        # signature never existed on any adapter, so this call previously always raised
+        # TypeError, was swallowed by the except below, and GetMap silently returned a blank
+        # transparent tile for every request regardless of layer/bbox — never actually working.
+        slice_result = adapter.get_slice(variable, depth_m, time_idx, (min_lon, min_lat, max_lon, max_lat))
+        data_2d = slice_result.data
 
     except Exception as e:
         logger.warning(f"WMS GetMap: adapter.get_slice failed for '{layer_id}': {e} — returning transparent tile")

@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { SceneManager } from '../../scene/SceneManager'
 import { useTarangStore } from '../../state/store'
+import { LanguageSwitcher } from '../../components/LanguageSwitcher'
+import { useT } from '../../i18n/useT'
+import type { TranslationKey } from '../../i18n/translations'
 
 /**
  * Explorer Mode — Public outreach / science communication (§2, §10)
@@ -12,17 +15,19 @@ import { useTarangStore } from '../../state/store'
  */
 
 interface KeyFrame {
-  caption:  string
-  duration: number  // ms
+  captionKey: TranslationKey
+  duration:   number  // ms
 }
 
+// Caption text lives in i18n/translations.ts (flythrough1..6) so the script re-renders in
+// whatever language the researcher/visitor picked via LanguageSwitcher.
 const FLYTHROUGH_SCRIPT: KeyFrame[] = [
-  { caption: "Welcome to TARANG — Exploring the Bay of Bengal", duration: 3000 },
-  { caption: "🌊 The Bay of Bengal: home to over 500 active Argo ocean floats", duration: 4000 },
-  { caption: "🌡️ Warm surface waters (28–30°C) drive the Indian monsoon system", duration: 4000 },
-  { caption: "🔵 Beneath the surface: cooler, saltier water masses at depth", duration: 4000 },
-  { caption: "⚡ Ocean currents carry heat that affects weather across South Asia", duration: 4000 },
-  { caption: "🔬 Scientists at INCOIS monitor these patterns every day to protect coastal communities", duration: 5000 },
+  { captionKey: 'flythrough1', duration: 3000 },
+  { captionKey: 'flythrough2', duration: 4000 },
+  { captionKey: 'flythrough3', duration: 4000 },
+  { captionKey: 'flythrough4', duration: 4000 },
+  { captionKey: 'flythrough5', duration: 4000 },
+  { captionKey: 'flythrough6', duration: 5000 },
 ]
 
 export function ExplorerMode() {
@@ -30,6 +35,7 @@ export function ExplorerMode() {
   const [frameIdx, setFrameIdx] = useState(0)
   const [visible, setVisible]   = useState(true)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const t = useT()
 
   // Auto-advance captions
   useEffect(() => {
@@ -47,7 +53,8 @@ export function ExplorerMode() {
     return () => clearTimeout(timerRef.current)
   }, [frameIdx])
 
-  const caption = FLYTHROUGH_SCRIPT[frameIdx]?.caption ?? ''
+  const captionKey = FLYTHROUGH_SCRIPT[frameIdx]?.captionKey
+  const caption = captionKey ? t(captionKey) : ''
 
   return (
     <div id="explorer-mode" style={styles.container}>
@@ -78,7 +85,12 @@ export function ExplorerMode() {
       {/* ── TARANG brand ─────────────────────────────────────────────────── */}
       <div style={styles.brand}>
         <span style={styles.brandText}>TARANG</span>
-        <span style={styles.brandSub}>SIH 2026 · INCOIS Ocean Visualization</span>
+        <span style={styles.brandSub}>{t('explorerBrandSub')}</span>
+      </div>
+
+      {/* ── Language switcher ───────────────────────────────────────────── */}
+      <div style={styles.langSwitcher}>
+        <LanguageSwitcher variant="glass" />
       </div>
 
       {/* ── Switch to Console ─────────────────────────────────────────────── */}
@@ -87,7 +99,7 @@ export function ExplorerMode() {
         style={styles.consoleBtn}
         onClick={() => setUIMode('console')}
       >
-        🔬 Forecaster Console →
+        🔬 {t('consoleModeBtn')} →
       </button>
     </div>
   )
@@ -155,6 +167,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     color:    'rgba(180, 220, 255, 0.5)',
     letterSpacing: '0.06em',
+  },
+  langSwitcher: {
+    position: 'absolute',
+    top:      '32px',
+    right:    '220px',
+    zIndex:   20,
   },
   consoleBtn: {
     position:       'absolute',

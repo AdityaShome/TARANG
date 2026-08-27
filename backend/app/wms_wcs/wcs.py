@@ -243,7 +243,7 @@ async def _get_coverage(
     except KeyError:
         raise HTTPException(404, f"Coverage '{coverage_id}' not found. Available: {list(registry.manifest_ids())}")
 
-    # Parse optional index subsets
+    # Parse optional index subsets (time/depth) and geographic subsets (lat/lon)
     def parse_index_range(s: Optional[str]) -> Optional[tuple[int, int]]:
         if s is None:
             return None
@@ -256,24 +256,52 @@ async def _get_coverage(
             return (v, v)
         return None
 
+    def parse_float_range(s: Optional[str]) -> Optional[tuple[float, float]]:
+        if s is None:
+            return None
+        s = s.strip("() ")
+        parts = s.split(",")
+        if len(parts) == 2:
+            return (float(parts[0]), float(parts[1]))
+        return None
+
     time_range  = parse_index_range(subset_time)
     depth_range = parse_index_range(subset_depth)
+    lat_range   = parse_float_range(subset_lat)
+    lon_range   = parse_float_range(subset_lon)
 
     try:
-        # Get metadata to know dimension sizes
+        # Get metadata to know dimension sizes and real (non-uniform) depth levels
         meta = adapter.get_metadata()
+        manifest = registry.get_manifest(coverage_id)
         dims = meta.get("dimensions", {})
         n_time  = dims.get("time",  1)
-        n_depth = dims.get("depth", 1)
+        depth_levels = meta.get("depth_levels") or [0]
+        n_depth = len(depth_levels)
+        variable = meta["available_variables"][0]
 
         t0, t1 = time_range  if time_range  else (0, n_time  - 1)
         d0, d1 = depth_range if depth_range else (0, n_depth - 1)
 
-        # Collect requested slices
+        # SUBSET[latitude]/SUBSET[longitude] were parsed but never actually used — every
+        # GetCoverage request silently ignored the geographic subset entirely. get_slice()
+        # requires a bbox unconditionally, so without one this always threw and GetCoverage
+        # 500'd for every request regardless of parameters. Fall back to the source's own
+        # configured default region when the caller doesn't specify one.
+        default_bbox = manifest.get("default_bbox") or manifest.get("local_cache_bbox") or [80, 5, 100, 25]
+        min_lon, max_lon = lon_range if lon_range else (default_bbox[0], default_bbox[2])
+        min_lat, max_lat = lat_range if lat_range else (default_bbox[1], default_bbox[3])
+        bbox = (min_lon, min_lat, max_lon, max_lat)
+
+        # Collect requested slices — get_slice(variable, depth_m, time_idx, bbox), not the
+        # (time_idx=, depth_idx=) signature this used to call, which doesn't exist on any
+        # adapter and always raised TypeError.
         slices = []
         for ti in range(t0, t1 + 1):
             for di in range(d0, d1 + 1):
-                slices.append(adapter.get_slice(time_idx=ti, depth_idx=di))
+                depth_m = depth_levels[di] if di < len(depth_levels) else depth_levels[-1]
+                result = adapter.get_slice(variable, depth_m, ti, bbox)
+                slices.append(result.data)
 
         if not slices:
             raise ValueError("No data slices returned")
