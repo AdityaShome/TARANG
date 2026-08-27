@@ -60,7 +60,8 @@ export class IsosurfaceLayer implements Layer {
         
         const maxDepthM = Math.max(...header.depth_levels)
         const vExag = state.colormap.verticalExaggeration || 50
-        const depthScale = (maxDepthM / 111000) * vExag 
+        const depthScale = (maxDepthM / 111000) * vExag
+        const [depthSize, latSize, lonSize] = header.volume_shape
 
         // Apply scale. Verts are (depth, lat, lon).
         // scale.x applies to depth, scale.y applies to lat, scale.z applies to lon.
