@@ -61,7 +61,6 @@ async def lifespan(app: FastAPI):
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     _cache = RedisCache(redis_url)
     await _cache.connect()
-    logger.info(f"Redis connected: {redis_url}")
     app.state.cache = _cache
 
     # ── Connect to PostGIS ────────────────────────────────────────────────────
