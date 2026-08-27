@@ -8,6 +8,8 @@ but this adapter provides the metadata.
 
 from __future__ import annotations
 import logging
+from pathlib import Path
+
 import xarray as xr
 from backend.app.adapters.base import DataSourceAdapter, CFMetadata, SliceResult, VolumeResult
 
@@ -17,6 +19,35 @@ logger = logging.getLogger("tarang.adapters.argo")
 class ArgoAdapter(DataSourceAdapter):
     def __init__(self, manifest: dict):
         super().__init__(manifest)
+
+    def open(self) -> xr.Dataset:
+        """
+        Open the ingested Argo NetCDF (written by ingest/argo_ingest.py via
+        direct ERDDAP requests — see §20 Rule 8). Falls back to source_url
+        if no local cache exists.
+        """
+        source = self.local_cache if self.local_cache and Path(self.local_cache).exists() else self.source_url
+        if source == self.source_url:
+            logger.warning(
+                f"Local cache not found at '{self.local_cache}'. "
+                f"Falling back to '{self.source_url}'. Run argo_ingest.py before demo day! (§15)"
+            )
+        else:
+            logger.debug(f"Using local cache: {source}")
+
+        for engine in ["netcdf4", "h5netcdf", "scipy"]:
+            try:
+                ds = xr.open_dataset(source, engine=engine, mask_and_scale=True, decode_times=True)
+                logger.info(f"Opened Argo dataset with engine '{engine}': {list(ds.data_vars)}")
+                return ds
+            except Exception as e:
+                logger.debug(f"Engine '{engine}' failed: {e}")
+                continue
+
+        raise RuntimeError(
+            f"Could not open Argo dataset '{source}' with any available engine "
+            "(netCDF4, h5netcdf, scipy). Check installation of netCDF4>=1.6."
+        )
 
     def get_metadata(self) -> dict:
         variable = self.variable
