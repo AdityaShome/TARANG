@@ -82,7 +82,7 @@ async function parseIsosurfaceBinary(buffer: ArrayBuffer): Promise<ParsedIsosurf
 
   const vertsBytes   = rest.slice(0,                    nVerts * 3 * 4)
   const normalsBytes = rest.slice(nVerts * 3 * 4,       nVerts * 3 * 4 * 2)
-  const facesBytes   = rest.slice(nVerts * 3 * 4 * 2)
+  const facesBytes   = rest.slice(nVerts * 3 * 4 * 2,   nVerts * 3 * 4 * 2 + nFaces * 3 * 4)
 
   return {
     header,

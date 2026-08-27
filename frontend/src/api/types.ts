@@ -23,16 +23,27 @@ export interface CFMetadata {
   }
 }
 
+// Adapters that implement get_slice()/get_volume() always populate bounds.lat
+// and bounds.lon (see backend/app/adapters/netcdf_adapter.py) — narrower than
+// the base CFMetadata.bounds, which is optional for the /metadata endpoint.
+interface ResolvedBounds {
+  lat:   [number, number]
+  lon:   [number, number]
+  depth: number[]
+}
+
 // ── Binary response headers (prepended to Float32Array body) ──────────────────
 export interface SliceHeader extends CFMetadata {
   shape:          [number, number]   // [lat, lon]
   depth_actual_m: number
   time:           string
+  bounds:         ResolvedBounds
 }
 
 export interface VolumeHeader extends CFMetadata {
-  shape: [number, number, number]   // [depth, lat, lon]
-  time:  string
+  shape:  [number, number, number]   // [depth, lat, lon]
+  time:   string
+  bounds: ResolvedBounds
 }
 
 export interface IsosurfaceHeader extends CFMetadata {

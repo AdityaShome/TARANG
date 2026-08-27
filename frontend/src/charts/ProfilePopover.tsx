@@ -54,8 +54,8 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
         yaxis:         {
           gridcolor:  'rgba(255,255,255,0.08)',
           color:      '#a0c4e8',
-          autorange:  'reversed',
-          title:      `Depth (${profile.units.depth})`,
+          autorange:  'reversed' as const,
+          title:      { text: `Depth (${profile.units.depth})` },
         },
       }
 
@@ -68,7 +68,7 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
         name: `Temperature (${profile.units.temperature})`,
       }], {
         ...commonLayout,
-        xaxis: { ...commonLayout.xaxis, title: `Temperature (${profile.units.temperature})` },
+        xaxis: { ...commonLayout.xaxis, title: { text: `Temperature (${profile.units.temperature})` } },
       }, { displayModeBar: false, responsive: true })
 
       Plotly.newPlot(salDiv, [{
@@ -80,7 +80,7 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
         name: `Salinity (${profile.units.salinity})`,
       }], {
         ...commonLayout,
-        xaxis: { ...commonLayout.xaxis, title: `Salinity (${profile.units.salinity})` },
+        xaxis: { ...commonLayout.xaxis, title: { text: `Salinity (${profile.units.salinity})` } },
       }, { displayModeBar: false, responsive: true })
     })
   }, [profile])

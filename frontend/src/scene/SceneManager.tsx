@@ -15,7 +15,7 @@
  * On unmount: disposes renderer + all layers (§20 Rule 7 — explicit GPU dispose).
  */
 
-import React, { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useTarangStore } from '../state/store'
