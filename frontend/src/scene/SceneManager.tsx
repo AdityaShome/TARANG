@@ -15,7 +15,7 @@
  * On unmount: disposes renderer + all layers (§20 Rule 7 — explicit GPU dispose).
  */
 
-import React, { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useTarangStore } from '../state/store'
@@ -34,7 +34,6 @@ interface SceneManagerProps {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const EARTH_RADIUS = 200
-const BOB_CENTER   = new THREE.Vector3(0, 0, 0)   // scene origin
 const BOB_LAT_C    = 15   // deg — centre of Bay of Bengal
 const BOB_LON_C    = 90   // deg
 

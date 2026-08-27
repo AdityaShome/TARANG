@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import { useEffect } from 'react'
 import { useTarangStore } from './state/store'
 import { fetchSources, fetchMetadata } from './api/client'
 import { ForecasterConsole } from './modes/ForecasterConsole'
