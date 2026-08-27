@@ -2,28 +2,32 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
+// Proxy targets default to Docker Compose service names; override with
+// VITE_BACKEND_HOST / VITE_THREDDS_HOST for standalone (non-Docker) dev.
+const backendTarget = `http://${process.env.VITE_BACKEND_HOST || 'backend:8000'}`
+const threddsTarget = `http://${process.env.VITE_THREDDS_HOST || 'thredds:8080'}`
+
 export default defineConfig({
   plugins: [react()],
   server: {
     host: '0.0.0.0',
     port: 5173,
     proxy: {
-      // During dev (in Docker): use service names on the Docker network
       '/api': {
-        target: 'http://backend:8000',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/thredds': {
-        target: 'http://thredds:8080',
+        target: threddsTarget,
         changeOrigin: true,
       },
       '/wms': {
-        target: 'http://thredds:8080',
+        target: threddsTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/wms/, '/thredds/wms'),
       },
       '/wcs': {
-        target: 'http://thredds:8080',
+        target: threddsTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/wcs/, '/thredds/wcs'),
       },
