@@ -102,7 +102,6 @@ export class IsosurfaceLayer implements Layer {
         const outward = latLonToXYZ(centerLat, centerLon, 1)
         this.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), outward)
         this.mesh.position.copy(outward).multiplyScalar(EARTH_RADIUS)
-        const [depthSize, latSize, lonSize] = header.volume_shape
 
         this.scene!.add(this.mesh)
         
