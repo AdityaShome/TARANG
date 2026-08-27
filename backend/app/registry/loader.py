@@ -134,6 +134,10 @@ class RegistryLoader:
         Called from main.py lifespan startup so the watcher runs for the entire
         lifetime of the application — no manual triggers needed during the demo.
         """
+        if not self._dir.exists():
+            logger.warning(f"Registry directory '{self._dir}' not found — filesystem watcher not started")
+            return
+
         try:
             from watchdog.observers import Observer
             from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent
