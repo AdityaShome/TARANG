@@ -40,6 +40,10 @@ class RedisCache:
         self._client: aioredis.Redis | None = None
 
     async def connect(self) -> None:
+        if not self._url:
+            logger.warning("REDIS_URL not set — caching disabled, every request recomputes")
+            return
+
         self._client = aioredis.from_url(
             self._url,
             encoding="utf-8",

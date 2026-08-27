@@ -119,6 +119,10 @@ async def get_isosurface(
             **vol_result.meta.to_header_dict(),
             "threshold": threshold,
             "time": vol_result.time_str,
+            # Grid shape marching_cubes ran over — verts are in (depth, lat, lon)
+            # index space, so the frontend needs these to scale them to physical
+            # units (§8.5). volume may have been downsampled — use its actual shape.
+            "volume_shape": list(volume.shape),
         }
         return _build_isosurface_binary(verts, faces, normals, header)
 
