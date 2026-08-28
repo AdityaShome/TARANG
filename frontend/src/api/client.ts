@@ -192,11 +192,12 @@ export async function fetchInstruments(params: {
   return res.json()
 }
 
-/** Fetch a depth profile for a single platform. */
-export async function fetchProfile(platformId: string, signal?: AbortSignal): Promise<DepthProfile> {
-  const key = `profile:${platformId}`
+/** Fetch a depth profile for a single platform, optionally comparing to a model source. */
+export async function fetchProfile(platformId: string, source?: string, timeIdx?: number, signal?: AbortSignal): Promise<DepthProfile> {
+  const sourceParam = source ? `&source=${encodeURIComponent(source)}&time_idx=${timeIdx ?? 0}` : ''
+  const key = `profile:${platformId}${sourceParam}`
   return dedupe(key, async () => {
-    const res = await fetch(`${API_BASE}/profile?platform_id=${encodeURIComponent(platformId)}`, { signal })
+    const res = await fetch(`${API_BASE}/profile?platform_id=${encodeURIComponent(platformId)}${sourceParam}`, { signal })
     if (!res.ok) throw new Error(`fetchProfile failed: ${res.status}`)
     return res.json() as Promise<DepthProfile>
   })

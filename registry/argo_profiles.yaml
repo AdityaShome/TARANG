@@ -4,8 +4,8 @@ description: "Argo GDAC core profiles: TEMP, PSAL, PRES for Bay of Bengal + Arab
 
 adapter: ArgoAdapter
 source: "https://data-argo.ifremer.fr"
-local_cache: "data/argo/BoB_argo_2026-08.nc"
-variable: TEMP
+local_cache: "data/argo/BoB_argo_2026.nc"
+variable: temp
 standard_name: sea_water_temperature
 long_name: "In-situ Temperature (Argo)"
 units: degree_Celsius

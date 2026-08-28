@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,25 @@ import xarray as xr
 from backend.app.adapters.base import DataSourceAdapter, CFMetadata, SliceResult, VolumeResult
 
 logger = logging.getLogger("tarang.adapters.netcdf")
+
+# Per-(source,variable,bbox) locks so concurrent requests for the SAME live Copernicus fetch
+# serialize instead of racing — without this, N layers/depth-levels/time-steps all active at
+# once (e.g. slice+volume+eddy+fronts) each independently see cache_file.exists() == False and
+# each kick off their own copernicusmarine.subset() call for the identical bbox+variable, at the
+# same time. That's genuinely observed in practice: the exact same bbox fetched 3-4x concurrently,
+# each contending for the same S3 connection pool ("Connection pool is full, discarding
+# connection") — wasteful, slow, and the reason a freshly-picked region could take far longer to
+# render than a single fetch should. `_LIVE_FETCH_LOCKS_GUARD` only protects creating a new Lock
+# per key without a race; the per-key Lock itself is what actually serializes the fetch.
+_live_fetch_locks: dict[str, threading.Lock] = {}
+_live_fetch_locks_guard = threading.Lock()
+
+
+def _lock_for(cache_key: str) -> threading.Lock:
+    with _live_fetch_locks_guard:
+        if cache_key not in _live_fetch_locks:
+            _live_fetch_locks[cache_key] = threading.Lock()
+        return _live_fetch_locks[cache_key]
 
 
 def _offline_mode() -> bool:
@@ -115,30 +135,39 @@ class NetCDFAdapter(DataSourceAdapter):
             logger.info(f"Using cached live fetch: {cache_file}")
             return self._open_local_or_configured_url(use_local=False, override_path=str(cache_file))
 
-        logger.info(
-            f"local_cache doesn't cover bbox={bbox}; fetching live from Copernicus Marine "
-            f"dataset '{self.live_dataset_id}' -> {cache_file}"
-        )
-        end = datetime.utcnow()
-        # Kept small (0-1000m, 3 days) so an interactive search returns in seconds.
-        start = end - timedelta(days=3)
-        copernicusmarine.subset(
-            dataset_id=self.live_dataset_id,
-            variables=[self.variable],
-            minimum_longitude=min_lon,
-            maximum_longitude=max_lon,
-            minimum_latitude=min_lat,
-            maximum_latitude=max_lat,
-            minimum_depth=0,
-            maximum_depth=1000,
-            start_datetime=start.strftime("%Y-%m-%dT00:00:00"),
-            end_datetime=end.strftime("%Y-%m-%dT00:00:00"),
-            output_filename=cache_file.name,
-            output_directory=str(cache_dir),
-            username=os.environ.get("COPERNICUS_USERNAME"),
-            password=os.environ.get("COPERNICUS_PASSWORD"),
-            overwrite=True,
-        )
+        # Serialize concurrent requests for this exact bbox+variable — see _lock_for's comment.
+        # Whichever caller gets the lock first does the real fetch; everyone else blocks here,
+        # then (now that the first caller finished) finds cache_file already on disk and just
+        # opens it, instead of every caller racing to independently re-download the same subset.
+        with _lock_for(cache_key):
+            if cache_file.exists():   # someone else finished the fetch while we were waiting
+                logger.info(f"Using cached live fetch (fetched while waiting): {cache_file}")
+                return self._open_local_or_configured_url(use_local=False, override_path=str(cache_file))
+
+            logger.info(
+                f"local_cache doesn't cover bbox={bbox}; fetching live from Copernicus Marine "
+                f"dataset '{self.live_dataset_id}' -> {cache_file}"
+            )
+            end = datetime.utcnow()
+            # Kept small (0-1000m, 3 days) so an interactive search returns in seconds.
+            start = end - timedelta(days=3)
+            copernicusmarine.subset(
+                dataset_id=self.live_dataset_id,
+                variables=[self.variable],
+                minimum_longitude=min_lon,
+                maximum_longitude=max_lon,
+                minimum_latitude=min_lat,
+                maximum_latitude=max_lat,
+                minimum_depth=0,
+                maximum_depth=1000,
+                start_datetime=start.strftime("%Y-%m-%dT00:00:00"),
+                end_datetime=end.strftime("%Y-%m-%dT00:00:00"),
+                output_filename=cache_file.name,
+                output_directory=str(cache_dir),
+                username=os.environ.get("COPERNICUS_USERNAME"),
+                password=os.environ.get("COPERNICUS_PASSWORD"),
+                overwrite=True,
+            )
         return self._open_local_or_configured_url(use_local=False, override_path=str(cache_file))
 
     def open(self, bbox: tuple[float, float, float, float] | None = None) -> xr.Dataset:
@@ -187,7 +216,10 @@ class NetCDFAdapter(DataSourceAdapter):
                     "units":         var.attrs.get("units", "unknown"),
                     "valid_min":     float(var.attrs.get("valid_min", -9999)),
                     "valid_max":     float(var.attrs.get("valid_max",  9999)),
-                    "missing_value": float(var.attrs.get("_FillValue", np.nan)),
+                    # xarray's mask_and_scale=True decode moves _FillValue out of .attrs into
+                    # .encoding — see the identical fix/comment in base.py's _extract_cf_meta,
+                    # which this duplicated (and inherited the same bug from).
+                    "missing_value": float(var.attrs.get("_FillValue", var.encoding.get("_FillValue", np.nan))),
                 }
 
         # Resolve actual depth levels from dataset, fallback to manifest
@@ -327,6 +359,38 @@ class NetCDFAdapter(DataSourceAdapter):
             lon=ds.coords[lon_dim].sel(**{lon_dim: slice(min_lon, max_lon)}).values.astype(np.float32),
             time_str=time_str,
         )
+
+    def get_profile_at(
+        self,
+        variable: str,
+        lat: float,
+        lon: float,
+        time_idx: int = 0
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Extract a vertical profile at the nearest grid cell to (lat, lon).
+        Returns (depths, values) as 1D numpy arrays.
+        """
+        ds = self.open(None)
+        lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+        lon_dim = "longitude" if "longitude" in ds.dims else "lon"
+        
+        subset = ds[variable].sel(**{
+            lat_dim: lat,
+            lon_dim: lon
+        }, method="nearest")
+
+        if "time" in subset.dims:
+            subset = subset.isel(time=time_idx)
+
+        depth_levels = self._resolve_depth_levels(ds)
+        depth_arr = np.array(depth_levels, dtype=np.float32)
+
+        arr = subset.values.astype(np.float32)
+        meta = self._extract_cf_meta(ds, variable, depth_levels)
+        arr = np.nan_to_num(arr, nan=meta.missing_value)
+
+        return depth_arr, arr
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

@@ -94,6 +94,12 @@ interface TarangState {
   flyToTarget:       { lat: number; lon: number } | null
   hasSearchedRegion: boolean
 
+  // Pick-a-region-on-the-globe: 'off' (normal orbit/click-marker behaviour), 'click' (next
+  // click on the globe surface becomes a fixed-size region centred there), 'drag' (drag out a
+  // custom rectangle). SceneManager reads this to know whether to raycast the globe instead of
+  // orbiting, and resets it to 'off' itself once a pick completes (one-shot, not a sticky mode).
+  mapSelectMode: 'off' | 'click' | 'drag'
+
   // Instrument selection
   selectedPlatformId: string | null
 
@@ -111,6 +117,7 @@ interface TarangState {
   setBbox:             (bbox: [number, number, number, number]) => void
   searchRegion:        (bbox: [number, number, number, number], label: string) => void
   clearFlyToTarget:    () => void
+  setMapSelectMode:    (mode: 'off' | 'click' | 'drag') => void
   setDepthLevels:      (levels: number[])      => void
   setTimeSteps:        (steps: string[])       => void
   setRenderMode:       (mode: RenderMode)      => void
@@ -158,6 +165,7 @@ export const useTarangStore = create<TarangState>()(
     regionLabel:         null,
     flyToTarget:         null,
     hasSearchedRegion:   false,
+    mapSelectMode:       'off',
 
     selectedPlatformId:  null,
     layerVisibility:     {
@@ -166,6 +174,8 @@ export const useTarangStore = create<TarangState>()(
       isosurface: false,
       markers:    true,
       vectors:    false,
+      eddy:       false,
+      fronts:     false,
     },
 
     // ── Actions ───────────────────────────────────────────────────────────────
@@ -205,9 +215,12 @@ export const useTarangStore = create<TarangState>()(
       })
     },
     clearFlyToTarget:    () => set({ flyToTarget: null }),
+    setMapSelectMode:    (mode) => set({ mapSelectMode: mode }),
     setDepthLevels:      (levels)  => set({ depthLevels: levels }),
     setTimeSteps:        (steps)   => set({ timeSteps: steps }),
-    // Render mode drives the slice/volume/isosurface trio (markers/vectors are independent).
+    // Switching render mode must also turn that layer on — slice/volume/isosurface
+    // are mutually exclusive views, so the other two are turned off to avoid
+    // fetching/rendering a hidden layer that can never be seen.
     setRenderMode:       (mode)    => set(s => ({
       renderMode: mode,
       layerVisibility: {

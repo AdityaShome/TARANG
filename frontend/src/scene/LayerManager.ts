@@ -14,8 +14,12 @@ export interface LayerParams {
 export interface Layer {
   build(scene: THREE.Scene): void
   update(params: Partial<LayerParams>): Promise<void>
+  // Layers are built once and kept alive for the scene's lifetime — this hides/shows
+  // whatever mesh(es) they currently own without disposing them, so switching render
+  // mode or unchecking a layer actually removes it from view instead of leaving a
+  // stale mesh from the last time it had data.
+  setVisible(visible: boolean): void
   dispose(): void
-  setVisible?(visible: boolean): void   // show/hide without tearing down data (render-mode switch)
 }
 
 export class LayerManager {
