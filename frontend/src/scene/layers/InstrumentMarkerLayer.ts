@@ -118,10 +118,6 @@ export class InstrumentMarkerLayer implements Layer {
     return this.meshes
   }
 
-  setVisible(visible: boolean) {
-    for (const mesh of this.meshes) mesh.visible = visible
-  }
-
   dispose() {
     if (this.abortController) this.abortController.abort()
     this.clearMeshes()

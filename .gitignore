@@ -37,6 +37,3 @@ data/argo/
 # OS
 .DS_Store
 Thumbs.db
-
-# Redis (local dev snapshots — redis-server drops these in whatever the cwd was)
-dump.rdb

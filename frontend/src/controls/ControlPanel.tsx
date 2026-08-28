@@ -36,20 +36,6 @@ export function ControlPanel() {
   }, [availableVariables, cfMetadata, activeVar])
   const [isPlaying, setIsPlaying] = useState(false)
 
-  // isoThreshold has no per-variable meaning on its own — a leftover threshold from a
-  // temperature source (e.g. 20°C) is nonsensical for salinity (~28-36 PSU) or any other unit
-  // range, and marching_cubes degenerates to a box/grid hugging the whole domain boundary when
-  // the threshold sits entirely outside the actual data. Reset it (and seed colormap bounds as
-  // an initial hint — DepthSliceLayer/VolumeLayer auto-stretch to real fetched data afterward)
-  // to the midpoint of the now-active variable's real range whenever it changes, not just once
-  // at bootstrap, since the variable dropdown lets the user switch at any time.
-  useEffect(() => {
-    const varMeta = cfMetadata[activeVar]
-    if (!varMeta) return
-    setColormap({ min: varMeta.valid_min, max: varMeta.valid_max })
-    setIsoThreshold((varMeta.valid_min + varMeta.valid_max) / 2)
-  }, [activeVar, cfMetadata, setColormap, setIsoThreshold])
-
   useEffect(() => {
     let interval: any
     if (isPlaying) {

@@ -21,13 +21,6 @@ from contextlib import asynccontextmanager
 import logging
 import os
 
-# Loads .env into os.environ if present — docker-compose substitutes .env values itself, but
-# nothing did this for a plain `uvicorn backend.app.main:app` run outside Docker, so
-# COPERNICUS_USERNAME/PASSWORD (and anything else in .env.example) were silently ignored unless
-# exported into the shell by hand. python-dotenv is already a pinned dependency for exactly this.
-from dotenv import load_dotenv
-load_dotenv()
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -35,7 +28,8 @@ from fastapi.responses import JSONResponse
 from backend.app.registry.loader import RegistryLoader
 from backend.app.cache import RedisCache
 from backend.app.db import Database
-from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile, eddy, registry as registry_endpoint
+from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile, registry as registry_endpoint
+
 logger = logging.getLogger("tarang")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "info").upper())
 
@@ -125,7 +119,6 @@ app.include_router(volume.router,            prefix="/api")
 app.include_router(isosurface.router,        prefix="/api")
 app.include_router(instruments.router,       prefix="/api")
 app.include_router(profile.router,           prefix="/api")
-app.include_router(eddy.router,              prefix="/api")
 app.include_router(registry_endpoint.router, prefix="/api")
 
 # Option B: hand-rolled OGC endpoints (only active when OPTION_B_MODE=true)

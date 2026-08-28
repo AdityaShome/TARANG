@@ -29,8 +29,6 @@ import { VolumeLayer } from './layers/VolumeLayer'
 import { IsosurfaceLayer } from './layers/IsosurfaceLayer'
 import { InstrumentMarkerLayer } from './layers/InstrumentMarkerLayer'
 import { VectorLayer } from './layers/VectorLayer'
-import { EddyOverlayLayer } from './layers/EddyOverlayLayer'
-import { FrontOverlayLayer } from './layers/FrontOverlayLayer'
 
 interface SceneManagerProps {
   autoRotate?: boolean
@@ -55,18 +53,6 @@ function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 
      r * Math.cos(phi),
      r * Math.sin(phi) * Math.sin(theta),
   )
-}
-
-// Inverse of latLonToXYZ — takes a point in the EARTH MESH'S LOCAL space (not world space; the
-// globe can be auto-rotating, so callers must worldToLocal() a raycast hit first) and recovers
-// lat/lon. Used by the click/drag map-select feature below.
-function xyzToLatLon(p: THREE.Vector3, r = EARTH_RADIUS): { lat: number; lon: number } {
-  const phi   = Math.acos(THREE.MathUtils.clamp(p.y / r, -1, 1))
-  const theta = Math.atan2(p.z, -p.x)
-  const lat = 90 - phi * (180 / Math.PI)
-  let lon = theta * (180 / Math.PI) - 180
-  if (lon < -180) lon += 360   // atan2 range is (-180,180]; normalise into our (-180,180] convention
-  return { lat, lon }
 }
 
 // ── Atmosphere vertex shader ───────────────────────────────────────────────────
@@ -309,8 +295,6 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     layerManager.addLayer('isosurface', new IsosurfaceLayer())
     layerManager.addLayer('markers',    new InstrumentMarkerLayer())
     layerManager.addLayer('vectors',    new VectorLayer())
-    layerManager.addLayer('eddy',       new EddyOverlayLayer())
-    layerManager.addLayer('fronts',     new FrontOverlayLayer())
 
     // (A hardcoded "Bay of Bengal region highlight ring" used to live here, always drawn
     // regardless of search state. Replaced by the boundary-box effect further down, which
@@ -354,139 +338,17 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     const pointer = new THREE.Vector2()
     let downPos: { x: number; y: number } | null = null
 
-    // ── Click/drag-to-select a region on the globe ──────────────────────────
-    // store.mapSelectMode gates this: 'off' leaves the existing marker-click/orbit behaviour
-    // alone; 'click' turns the next plain click into a fixed-size region; 'drag' turns a
-    // click-drag into a custom rectangle (camera orbit is disabled for its duration so the drag
-    // doesn't fight OrbitControls). Both raycast against the real (possibly slowly auto-
-    // rotating) earth mesh, then worldToLocal() the hit point before inverting the lat/lon
-    // formula — doing the inverse math in world space would silently drift as the globe rotates.
-    const PICK_SPAN_DEG = 12   // half-span-derived box size for a single click pick
-    let dragStart: { lat: number; lon: number } | null = null
-    let dragPreview: THREE.Line | null = null
-
-    function raycastGlobe(e: PointerEvent): { lat: number; lon: number } | null {
-      if (!earthRef.current) return null
-      const rect = canvas.getBoundingClientRect()
-      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
-      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
-      raycaster.setFromCamera(pointer, camera)
-      const hits = raycaster.intersectObject(earthRef.current)
-      if (hits.length === 0) return null
-      const local = earthRef.current.worldToLocal(hits[0].point.clone())
-      return xyzToLatLon(local)
-    }
-
-    function boxAround(lat: number, lon: number, halfSpan: number): [number, number, number, number] {
-      return [
-        Math.max(lon - halfSpan, -180), Math.max(lat - halfSpan, -90),
-        Math.min(lon + halfSpan, 180),  Math.min(lat + halfSpan, 90),
-      ]
-    }
-
-    function clearDragPreview() {
-      if (dragPreview) {
-        scene.remove(dragPreview)
-        dragPreview.geometry.dispose()
-        ;(dragPreview.material as THREE.Material).dispose()
-        dragPreview = null
-      }
-    }
-
-    // Draws/updates a rectangle outline on the globe surface for the two lat/lon corners —
-    // sampled as a polyline (not 4 straight 3D segments) so each edge visibly follows the
-    // sphere's curvature instead of cutting a straight chord through it.
-    function updateDragPreview(latA: number, lonA: number, latB: number, lonB: number) {
-      const minLat = Math.min(latA, latB), maxLat = Math.max(latA, latB)
-      const minLon = Math.min(lonA, lonB), maxLon = Math.max(lonA, lonB)
-      const r = EARTH_RADIUS * 1.01
-      const pts: THREE.Vector3[] = []
-      const STEPS = 16
-      const edge = (fromLat: number, fromLon: number, toLat: number, toLon: number) => {
-        for (let i = 0; i <= STEPS; i++) {
-          const t = i / STEPS
-          pts.push(latLonToXYZ(fromLat + (toLat - fromLat) * t, fromLon + (toLon - fromLon) * t, r))
-        }
-      }
-      edge(minLat, minLon, minLat, maxLon)
-      edge(minLat, maxLon, maxLat, maxLon)
-      edge(maxLat, maxLon, maxLat, minLon)
-      edge(maxLat, minLon, minLat, minLon)
-
-      if (!dragPreview) {
-        const geometry = new THREE.BufferGeometry().setFromPoints(pts)
-        const material = new THREE.LineBasicMaterial({ color: 0x00d4ff })
-        dragPreview = new THREE.Line(geometry, material)
-        dragPreview.frustumCulled = false
-        scene.add(dragPreview)
-      } else {
-        dragPreview.geometry.setFromPoints(pts)
-      }
-    }
-
     function onPointerDown(e: PointerEvent) {
       downPos = { x: e.clientX, y: e.clientY }
-
-      if (useTarangStore.getState().mapSelectMode === 'drag') {
-        const hit = raycastGlobe(e)
-        if (hit) {
-          dragStart = hit
-          controls.enabled = false   // dragging picks a box, not orbiting
-        }
-      }
-    }
-
-    function onPointerMove(e: PointerEvent) {
-      if (dragStart) {
-        const hit = raycastGlobe(e)
-        if (hit) updateDragPreview(dragStart.lat, dragStart.lon, hit.lat, hit.lon)
-      }
     }
 
     function onPointerUp(e: PointerEvent) {
-      const mode = useTarangStore.getState().mapSelectMode
-
-      if (mode === 'drag' && dragStart) {
-        const end = raycastGlobe(e) ?? dragStart
-        const bbox: [number, number, number, number] = [
-          Math.max(Math.min(dragStart.lon, end.lon), -180),
-          Math.max(Math.min(dragStart.lat, end.lat), -90),
-          Math.min(Math.max(dragStart.lon, end.lon), 180),
-          Math.min(Math.max(dragStart.lat, end.lat), 90),
-        ]
-        dragStart = null
-        controls.enabled = true
-        clearDragPreview()
-        downPos = null
-        // A degenerate (near-zero-area) drag reads as an accidental click — fall back to the
-        // same fixed-size box a plain click would produce, centred on the release point.
-        const [minLon, minLat, maxLon, maxLat] = bbox
-        const region = (maxLon - minLon < 0.5 || maxLat - minLat < 0.5)
-          ? boxAround(end.lat, end.lon, PICK_SPAN_DEG)
-          : bbox
-        useTarangStore.getState().searchRegion(region, `Custom region (${end.lat.toFixed(1)}, ${end.lon.toFixed(1)})`)
-        useTarangStore.getState().setMapSelectMode('off')
-        return
-      }
-
       // Ignore drags (camera orbit) — only treat as a click if the pointer barely moved.
       if (!downPos || Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 4) {
         downPos = null
         return
       }
       downPos = null
-
-      if (mode === 'click') {
-        const hit = raycastGlobe(e)
-        if (hit) {
-          useTarangStore.getState().searchRegion(
-            boxAround(hit.lat, hit.lon, PICK_SPAN_DEG),
-            `Custom point (${hit.lat.toFixed(1)}, ${hit.lon.toFixed(1)})`
-          )
-          useTarangStore.getState().setMapSelectMode('off')
-        }
-        return
-      }
 
       const markerLayer = layerManagerRef.current?.getLayer('markers') as InstrumentMarkerLayer | undefined
       const meshes = markerLayer?.getMeshes?.()
@@ -506,15 +368,12 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     }
 
     canvas.addEventListener('pointerdown', onPointerDown)
-    canvas.addEventListener('pointermove', onPointerMove)
     canvas.addEventListener('pointerup', onPointerUp)
 
     return () => {
       cancelAnimationFrame(rafRef.current)
       ro.disconnect()
-      clearDragPreview()
       canvas.removeEventListener('pointerdown', onPointerDown)
-      canvas.removeEventListener('pointermove', onPointerMove)
       canvas.removeEventListener('pointerup', onPointerUp)
       controls.dispose()
       renderer.dispose()
@@ -524,45 +383,21 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
 
   // ── Update data layers on store changes ────────────────────────────────────
   useEffect(() => {
-    const layerManager = layerManagerRef.current
-    if (!layerManager) return
-
-    // Every layer's mesh is built once and kept alive for the scene's lifetime (LayerManager
-    // adds them all up front) — so whether one is currently ON screen is a separate question
-    // from whether it HAS data. setVisible() answers "on screen right now", independent of the
-    // update() calls below. Without this, whichever layer last successfully fetched data stays
-    // visible forever: switching render mode or unchecking a Layers checkbox only stopped that
-    // layer from being *updated*, never hid what it had already rendered.
-    const ALL_LAYER_IDS = ['slice', 'volume', 'isosurface', 'markers', 'vectors', 'eddy', 'fronts'] as const
-    const activeLayerIds = new Set<string>()
-
-    // store.setActiveSource() clears activeVar synchronously so it can never name a variable
-    // belonging to the PREVIOUS source. App.tsx's bootstrap effect re-fetches metadata and
-    // calls setActiveVar once it knows the right name for the new source — until then, skip
-    // firing layer requests (otherwise we ask the new source for a variable it doesn't have
-    // and the backend 500s).
-    // No default sea — nothing renders until the researcher actually searches a region.
-    if (!hasSearchedRegion || !activeVar || isLoading) {
-      for (const id of ALL_LAYER_IDS) layerManager.getLayer(id)?.setVisible(false)
-      return
-    }
-
-    if (layerVisibility['slice']      && renderMode === 'slice')      activeLayerIds.add('slice')
-    if (layerVisibility['volume']     && renderMode === 'volume')     activeLayerIds.add('volume')
-    if (layerVisibility['isosurface'] && renderMode === 'isosurface') activeLayerIds.add('isosurface')
-    if (layerVisibility['markers'])  activeLayerIds.add('markers')
-    if (layerVisibility['vectors'])  activeLayerIds.add('vectors')
-    if (layerVisibility['eddy'])     activeLayerIds.add('eddy')
-    if (layerVisibility['fronts'])   activeLayerIds.add('fronts')
-
-    for (const id of ALL_LAYER_IDS) {
-      layerManager.getLayer(id)?.setVisible(activeLayerIds.has(id))
-    }
+    if (!layerManagerRef.current) return
+    // Nothing renders until a region is searched and metadata has resolved activeVar.
+    if (!hasSearchedRegion) return
+    if (!activeVar || isLoading) return
 
     const pending: Promise<void>[] = []
 
-    if (activeLayerIds.has('slice')) {
-      const layer = layerManager.getLayer('slice')
+    // Render mode drives the slice/volume/isosurface trio: show the active one, hide the rest.
+    for (const [layerId, mode] of [['slice', 'slice'], ['volume', 'volume'], ['isosurface', 'isosurface']] as const) {
+      const active = !!layerVisibility[layerId] && renderMode === mode
+      layerManagerRef.current.getLayer(layerId)?.setVisible?.(active)
+    }
+
+    if (layerVisibility['slice'] && renderMode === 'slice') {
+      const layer = layerManagerRef.current.getLayer('slice')
       if (layer) {
         // depthIdx is a depth-level INDEX; DepthSliceLayer resolves it via depthLevels[].
         pending.push(layer.update({
@@ -574,8 +409,8 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       }
     }
 
-    if (activeLayerIds.has('volume')) {
-      const layer = layerManager.getLayer('volume')
+    if (layerVisibility['volume'] && renderMode === 'volume') {
+      const layer = layerManagerRef.current.getLayer('volume')
       if (layer) {
         pending.push(layer.update({
           source: activeSourceId, variable: activeVar,
@@ -586,8 +421,8 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       }
     }
 
-    if (activeLayerIds.has('isosurface')) {
-      const layer = layerManager.getLayer('isosurface')
+    if (layerVisibility['isosurface'] && renderMode === 'isosurface') {
+      const layer = layerManagerRef.current.getLayer('isosurface')
       if (layer) {
         pending.push(layer.update({
           source: activeSourceId, variable: activeVar,
@@ -596,40 +431,21 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       }
     }
 
-    if (activeLayerIds.has('markers')) {
-      const layer = layerManager.getLayer('markers')
+    if (layerVisibility['markers']) {
+      const layer = layerManagerRef.current.getLayer('markers')
       if (layer) pending.push(layer.update({ bbox }))
     }
 
-    if (activeLayerIds.has('vectors')) {
-      const layer = layerManager.getLayer('vectors')
+    if (layerVisibility['vectors']) {
+      const layer = layerManagerRef.current.getLayer('vectors')
       if (layer) pending.push(layer.update({ bbox, timeIdx: activeTimeIdx, opacity: colormap.opacity }))
-    }
-
-    if (activeLayerIds.has('eddy')) {
-      const layer = layerManager.getLayer('eddy')
-      if (layer) pending.push(layer.update({ source: activeSourceId, bbox, timeIdx: activeTimeIdx }))
-    }
-
-    if (activeLayerIds.has('fronts')) {
-      const layer = layerManager.getLayer('fronts')
-      if (layer) pending.push(layer.update({ source: activeSourceId, variable: activeVar, bbox, timeIdx: activeTimeIdx }))
     }
 
     if (pending.length > 0) {
       useTarangStore.getState().setFetchingLayers(true)
       Promise.allSettled(pending).finally(() => useTarangStore.getState().setFetchingLayers(false))
     }
-    // NOT `colormap` (the whole object) — DepthSliceLayer/VolumeLayer call setColormap({min,max})
-    // themselves after every successful fetch (auto-contrast-stretch to the real data range).
-    // Depending on the whole object here created a feedback loop: fetch -> writes a new colormap
-    // object -> effect re-runs because the reference changed -> fetches again -> writes again...
-    // every render/network round-trip was competing to abort the one before it, so a freshly
-    // picked region's fetch kept getting cancelled before it could finish, leaving the previous
-    // region's texture on screen. Depend only on the fields a user actually changes directly
-    // (palette, opacity, log scale, vertical exaggeration) — min/max are fetch OUTPUT, not input.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderMode, activeSourceId, activeVar, activeTimeIdx, activeDepthIdx, bbox, colormap.name, colormap.opacity, colormap.logScale, colormap.verticalExaggeration, layerVisibility, isLoading, hasSearchedRegion])
+  }, [renderMode, activeSourceId, activeVar, activeTimeIdx, activeDepthIdx, bbox, colormap, layerVisibility, isLoading, hasSearchedRegion])
 
   // ── Region search: fly the camera to the searched location ─────────────────
   useEffect(() => {

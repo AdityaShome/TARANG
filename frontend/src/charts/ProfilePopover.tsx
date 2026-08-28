@@ -16,19 +16,16 @@ interface ProfilePopoverProps {
 
 export function ProfilePopover({ platformId }: ProfilePopoverProps) {
   const setSelectedPlatform = useTarangStore(s => s.setSelectedPlatform)
-  const activeSourceId = useTarangStore(s => s.activeSourceId)
-  const activeTimeIdx = useTarangStore(s => s.activeTimeIdx)
   const [profile, setProfile] = useState<DepthProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
-  const [showDelta, setShowDelta] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
     setError(null)
 
-    fetchProfile(platformId, showDelta ? activeSourceId : undefined, showDelta ? activeTimeIdx : undefined, controller.signal)
+    fetchProfile(platformId, controller.signal)
       .then(data => { setProfile(data); setLoading(false) })
       .catch(e => {
         if (e.name !== 'AbortError') {
@@ -38,7 +35,7 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
       })
 
     return () => controller.abort()
-  }, [platformId, showDelta, activeSourceId, activeTimeIdx])
+  }, [platformId])
 
   // Lazy-load Plotly to avoid blocking initial render
   useEffect(() => {
@@ -60,57 +57,33 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
           autorange:  'reversed' as const,
           title:      { text: `Depth (${profile.units.depth})` },
         },
-        showlegend:    showDelta,
-        legend:        { x: 0, y: 1.1, orientation: 'h' as const, font: { size: 10 } }
       }
 
-      const tempTraces: any[] = [{
+      Plotly.newPlot(tempDiv, [{
         x: profile.temperature,
         y: profile.depth,
         type: 'scatter', mode: 'lines+markers',
         line: { color: '#ff6b6b', width: 2 },
         marker: { size: 4, color: '#ff6b6b' },
-        name: `Obs`,
-      }]
-      if (showDelta && profile.model_temperature) {
-        tempTraces.push({
-          x: profile.model_temperature,
-          y: profile.depth,
-          type: 'scatter', mode: 'lines',
-          line: { color: '#ffd166', width: 2, dash: 'dash' },
-          name: `Model`,
-        })
-      }
-
-      Plotly.newPlot(tempDiv, tempTraces, {
+        name: `Temperature (${profile.units.temperature})`,
+      }], {
         ...commonLayout,
         xaxis: { ...commonLayout.xaxis, title: { text: `Temperature (${profile.units.temperature})` } },
       }, { displayModeBar: false, responsive: true })
 
-      const salTraces: any[] = [{
+      Plotly.newPlot(salDiv, [{
         x: profile.salinity,
         y: profile.depth,
         type: 'scatter', mode: 'lines+markers',
         line: { color: '#4fc3f7', width: 2 },
         marker: { size: 4, color: '#4fc3f7' },
-        name: `Obs`,
-      }]
-      if (showDelta && profile.model_salinity) {
-        salTraces.push({
-          x: profile.model_salinity,
-          y: profile.depth,
-          type: 'scatter', mode: 'lines',
-          line: { color: '#00d4ff', width: 2, dash: 'dash' },
-          name: `Model`,
-        })
-      }
-
-      Plotly.newPlot(salDiv, salTraces, {
+        name: `Salinity (${profile.units.salinity})`,
+      }], {
         ...commonLayout,
         xaxis: { ...commonLayout.xaxis, title: { text: `Salinity (${profile.units.salinity})` } },
       }, { displayModeBar: false, responsive: true })
     })
-  }, [profile, showDelta])
+  }, [profile])
 
   return (
     <div id="profile-popover" style={styles.container}>
@@ -125,24 +98,13 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <label style={{ fontSize: '12px', color: '#a0c4e8', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-            <input 
-              type="checkbox" 
-              checked={showDelta} 
-              onChange={e => setShowDelta(e.target.checked)}
-              style={{ accentColor: '#00d4ff' }}
-            />
-            Show model delta
-          </label>
-          <button
-            id="close-profile"
-            style={styles.closeBtn}
-            onClick={() => setSelectedPlatform(null)}
-          >
-            ✕
-          </button>
-        </div>
+        <button
+          id="close-profile"
+          style={styles.closeBtn}
+          onClick={() => setSelectedPlatform(null)}
+        >
+          ✕
+        </button>
       </div>
 
       {/* Body */}

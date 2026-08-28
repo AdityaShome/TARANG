@@ -702,7 +702,7 @@ The PS does **not** ask for a new forecasting model, and building one is explici
 
 ---
 
-## 18. Open Source References, Publications & Dataset Links
+## 18. Open Source References, Publications & Links
 
 ### Publications
 - Jain, Singh, Boda, Singh, Hotz, Vinayachandran, Natarajan - *"pyParaOcean: A System for Visual Analysis of Ocean Data,"* EnvirVis@EuroVis 2023. DOI: 10.2312/envirvis.20231100. https://arxiv.org/abs/2309.14328
@@ -715,16 +715,14 @@ The PS does **not** ask for a new forecasting model, and building one is explici
 - Will Usher - "Volume Rendering with WebGL" tutorial - raymarching + transfer-function reference
 - VAPOR (NCAR) - GPU-accelerated volumetric visualization for earth/ocean science (desktop reference)
 
-### Dataset Link Table (see §7 for full details)
-| Dataset | Source URL | Access Format | 
-|---|---|---|
-| INCOIS Data Holdings | https://incois.gov.in/site/dataholdings.jsp | Web Portal |
-| INCOIS Digital Ocean | https://do.incois.gov.in | Web Portal / REST API |
-| HYCOM GLBy0.08 | https://tds.hycom.org | OPeNDAP / THREDDS |
-| Copernicus Marine | https://marine.copernicus.eu | NetCDF Download / subset API |
-| Argo GDAC (Ifremer) | https://data-argo.ifremer.fr | NetCDF FTP / argopy |
-| NOAA OISST | https://www.ncei.noaa.gov | NetCDF / OPeNDAP |
-| IOOS Glider DAC | https://gliders.ioos.us | ERDDAP / NetCDF |
+### Data sources (see §7 for the full table)
+- INCOIS Data Holdings: https://incois.gov.in/site/dataholdings.jsp
+- INCOIS Digital Ocean: https://do.incois.gov.in
+- HYCOM: https://tds.hycom.org
+- Copernicus Marine Service: https://marine.copernicus.eu
+- Argo GDAC (Ifremer): https://data-argo.ifremer.fr
+- NOAA OISST: https://www.ncei.noaa.gov
+- IOOS Glider DAC: https://gliders.ioos.us
 
 ### Official
 - SIH 2026 portal: https://sih.gov.in/sih2026PS - **the authoritative source for the current PS text; re-check before final submission**
@@ -756,24 +754,6 @@ The PS does **not** ask for a new forecasting model, and building one is explici
 | REST | Representational State Transfer |
 | GLSL | OpenGL Shading Language |
 | PFZ | Potential Fishing Zone (an existing INCOIS advisory service) |
-| HYCOM | Hybrid Coordinate Ocean Model |
-| ROMS | Regional Ocean Modeling System |
-| GODAS | Global Ocean Data Assimilation System |
-| MOM | Modular Ocean Model |
-| BoB | Bay of Bengal |
-| AS | Arabian Sea |
-| SIH | Smart India Hackathon |
-| PS | Problem Statement |
-| OMNI-RAMA | Ocean Moored buoy Network for Northern Indian Ocean - Research Moored Array for African-Asian-Australian Monsoon Analysis and Prediction |
-| RAMA | Research Moored Array for African-Asian-Australian Monsoon Analysis and Prediction |
-| TMI | TRMM Microwave Imager |
-| GPS | Global Positioning System |
-| JSON | JavaScript Object Notation |
-| YAML | YAML Ain't Markup Language |
-| WMO | World Meteorological Organization |
-| CSS | Cascading Style Sheets |
-| CLI | Command Line Interface |
-| API | Application Programming Interface |
 
 *Cross-check this table against the official listing on sih.gov.in/sih2026PS before final submission - the official version may add or change entries.*
 

@@ -105,29 +105,12 @@ export interface DepthProfile {
   time:        string | null
   depth:       number[]
   temperature: number[]
-  model_temperature?: number[] | null
-  delta_temperature?: number[] | null
   salinity:    number[]
-  model_salinity?: number[] | null
-  delta_salinity?: number[] | null
   units: {
     depth:       string
     temperature: string
     salinity:    string
   }
-}
-
-export interface EddyCell {
-  lat: number
-  lon: number
-  type: 'warm' | 'cold' | 'front'
-  w_value: number
-}
-
-export interface FrontCell {
-  lat: number
-  lon: number
-  gradient_magnitude: number
 }
 
 // ── Parsed binary data ────────────────────────────────────────────────────────

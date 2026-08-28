@@ -6,15 +6,25 @@ import { useTarangStore } from '../../state/store'
 import vertShader from '../shaders/volumeVert.glsl?raw'
 import fragShader from '../shaders/volumeFrag_v2.glsl?raw'
 import type { ColormapName } from '../../api/types'
-import { EARTH_RADIUS, surfaceBasis } from './sphereUtils'
-import { computeDataRange } from './dataStats'
 
 // Must match the u_colormap branches in the shaders.
 const COLORMAP_INDEX: Record<ColormapName, number> = {
   viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
 }
 
+// Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ.
+const EARTH_RADIUS = 200
 const DEG_TO_WORLD = (Math.PI * EARTH_RADIUS) / 180 // world units per degree of lat/lon
+
+function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 {
+  const phi = (90 - lat) * (Math.PI / 180)
+  const theta = (lon + 180) * (Math.PI / 180)
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta),
+  )
+}
 
 // ?voldebug=1..4 → raymarch diagnostic overlay (see volumeFrag_v2.glsl).
 function readDebugFlag(): number {
@@ -113,12 +123,8 @@ export class VolumeLayer implements Layer {
         this.mesh.visible = this.wantVisible
 
         const state = useTarangStore.getState()
-        // Auto-contrast-stretch to the actual fetched data's range — see dataStats.ts /
-        // DepthSliceLayer.ts for why (global valid_min/valid_max makes a small region's real
-        // variance compress to a near-invisible sliver of the colormap).
-        const [dataMin, dataMax] = computeDataRange(data, header.missing_value, header.valid_min, header.valid_max)
-        this.material.uniforms.u_clim.value.set(dataMin, dataMax)
-        useTarangStore.getState().setColormap({ min: dataMin, max: dataMax })
+        const userClim = [state.colormap.min, state.colormap.max]
+        this.material.uniforms.u_clim.value.set(userClim[0], userClim[1])
         this.material.uniforms.u_missing.value = header.missing_value ?? -9999.0
         this.material.uniforms.u_colormap.value = COLORMAP_INDEX[state.colormap.name] ?? 0
         this.material.uniforms.u_log_scale.value = state.colormap.logScale ? 1 : 0
@@ -134,13 +140,11 @@ export class VolumeLayer implements Layer {
         this.mesh.scale.set(widthDeg * DEG_TO_WORLD, heightDeg * DEG_TO_WORLD, depthScale * DEG_TO_WORLD)
         const centerLat = (header.bounds.lat[0] + header.bounds.lat[1]) / 2
         const centerLon = (header.bounds.lon[0] + header.bounds.lon[1]) / 2
-        const { east, north, outward } = surfaceBasis(centerLat, centerLon)
+        const outward = latLonToXYZ(centerLat, centerLon, 1)
         const surfacePoint = outward.clone().multiplyScalar(EARTH_RADIUS)
 
         this.material.uniforms.u_regionNormal.value.copy(outward)  // limb fade (shader)
-        // Local X=lon(width), Y=lat(height), Z=depth — see sphereUtils.ts for why this must be
-        // a full three-axis basis (shared with IsosurfaceLayer), not a single-axis alignment.
-        this.mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(east, north, outward))
+        this.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), outward)
         this.mesh.position.copy(surfacePoint)
           .addScaledVector(outward, -(depthScale * DEG_TO_WORLD) / 2)
 

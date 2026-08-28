@@ -168,21 +168,12 @@ class DataSourceAdapter(abc.ABC):
         """
         var = ds[variable]
         attrs = var.attrs
-        # xarray's mask_and_scale=True decoding (used by every adapter's open()) converts
-        # _FillValue-marked cells to real NaN in the data AND moves _FillValue/missing_value out
-        # of .attrs into .encoding — so after decode, .attrs never has it. Without this fallback,
-        # missing_value silently became NaN (via the np.nan default below), which orjson then
-        # serializes as JSON `null`, breaking every consumer that compares against it numerically
-        # (the frontend's u_missing shader uniform, np.nan_to_num's fill target on the wire).
-        missing_value = attrs.get("_FillValue", attrs.get("missing_value", var.encoding.get(
-            "_FillValue", var.encoding.get("missing_value", np.nan)
-        )))
         return CFMetadata(
             variable=variable,
             standard_name=attrs.get("standard_name", variable),
             long_name=attrs.get("long_name", variable),
             units=attrs.get("units", "unknown"),
-            missing_value=float(missing_value),
+            missing_value=float(attrs.get("_FillValue", attrs.get("missing_value", np.nan))),
             valid_min=float(attrs.get("valid_min", float(np.nanmin(var.values[:1])))),
             valid_max=float(attrs.get("valid_max", float(np.nanmax(var.values[:1])))),
             dtype="float32",

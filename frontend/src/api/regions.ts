@@ -10,19 +10,6 @@ export interface CatalogRegion {
 }
 
 export const REGION_CATALOG: CatalogRegion[] = [
-  // ── World oceans ─────────────────────────────────────────────────────────
-  // Nominatim's free-text search is unreliable for these — its top match for "Pacific Ocean"
-  // is a near-zero-area point (some mislabeled POI, not the ocean polygon), which the geocoder's
-  // MIN_SPAN clamp then expands to a tiny 2deg box — a real ocean search rendering as a barely-
-  // there patch. Hardcode these instead of depending on OSM's point-vs-polygon disambiguation.
-  // bbox format here has no antimeridian wraparound (assumes minLon < maxLon, same limitation as
-  // the rest of this app's bbox convention), so Pacific/Southern/Arctic use the largest
-  // non-wrapping approximation rather than their true full extent.
-  { name: 'Pacific Ocean', bbox: [120, -60, 180, 60] },
-  { name: 'Atlantic Ocean', bbox: [-70, -60, 20, 65] },
-  { name: 'Southern Ocean', aliases: ['antarctic ocean'], bbox: [-180, -80, 180, -60] },
-  { name: 'Arctic Ocean', bbox: [-180, 66, 180, 90] },
-
   // ── Primary seas ─────────────────────────────────────────────────────────
   { name: 'Bay of Bengal', aliases: ['bob'], bbox: [80, 5, 100, 22], hasModelData: true },
   { name: 'Arabian Sea', bbox: [55, 5, 75, 25], hasModelData: true },
