@@ -23,10 +23,15 @@ vec3 mix5(float t, vec3 c0, vec3 c1, vec3 c2, vec3 c3, vec3 c4) {
     t = clamp(t, 0.0, 1.0) * 4.0;
     float seg = floor(t);
     float f = t - seg;
-    if (seg < 1.0) return mix(c0, c1, f);
-    if (seg < 2.0) return mix(c1, c2, f);
-    if (seg < 3.0) return mix(c2, c3, f);
-    return mix(c3, c4, f);
+    if (seg < 1.0) {
+        return mix(c0, c1, f);
+    } else if (seg < 2.0) {
+        return mix(c1, c2, f);
+    } else if (seg < 3.0) {
+        return mix(c2, c3, f);
+    } else {
+        return mix(c3, c4, f);
+    }
 }
 vec3 viridis(float t) { return mix5(t, vec3(0.267,0.005,0.329), vec3(0.231,0.322,0.545), vec3(0.128,0.567,0.551), vec3(0.369,0.789,0.383), vec3(0.993,0.906,0.144)); }
 vec3 plasma(float t)  { return mix5(t, vec3(0.051,0.031,0.529), vec3(0.494,0.012,0.658), vec3(0.799,0.279,0.471), vec3(0.973,0.585,0.255), vec3(0.940,0.975,0.131)); }
@@ -40,11 +45,19 @@ vec3 jetMap(float t) {
         clamp(min(1.5 - abs(2.0*t - 0.5), 1.0), 0.0, 1.0));
 }
 vec3 safeColormap(float t) {
-    if (u_colormap < 0.5) return viridis(t);
-    if (u_colormap < 1.5) return plasma(t);
-    if (u_colormap < 2.5) return magma(t);
-    if (u_colormap < 3.5) return inferno(t);
-    return jetMap(t);
+    // else-if, not independent `if (cond) return` — see the identical fix/comment in
+    // colormapFrag.glsl's applyColormap for why (ANGLE GLSL->HLSL translation quirk).
+    if (u_colormap < 0.5) {
+        return viridis(t);
+    } else if (u_colormap < 1.5) {
+        return plasma(t);
+    } else if (u_colormap < 2.5) {
+        return magma(t);
+    } else if (u_colormap < 3.5) {
+        return inferno(t);
+    } else {
+        return jetMap(t);
+    }
 }
 float normalize_val(float val) {
     if (u_log_scale > 0.5) {

@@ -24,6 +24,7 @@ import numpy as np
 import netCDF4 as nc
 from pathlib import Path
 from datetime import datetime, timedelta
+from global_land_mask import globe
 
 # ── Output path ───────────────────────────────────────────────────────────────
 OUT_DIR = Path(os.getenv("DATA_DIR", "data")) / "netcdf"
@@ -38,6 +39,12 @@ N_TIME = 8   # 8 daily snapshots
 
 NLAT, NLON, NDEP = len(LAT), len(LON), len(DEP)
 LONS, LATS = np.meshgrid(LON, LAT)
+
+# The synthetic fields below are pure functions of lat/lon/depth — they have no notion of
+# coastline, so without this they paint a "temperature"/"salinity" value over India, Myanmar,
+# Bangladesh and Sri Lanka too. is_land() expects longitude in [-180, 180]; our grid is already
+# in that range (80-100°E) so no wraparound handling is needed.
+LAND_MASK = globe.is_land(LATS, LONS)  # (NLAT, NLON) bool — True where dry land
 
 # ── Realistic temperature field (°C) ──────────────────────────────────────────
 def make_temperature() -> np.ndarray:
@@ -178,6 +185,10 @@ def write_netcdf(path: Path, var_name: str, data: np.ndarray,
     v.valid_min   = valid_min
     v.valid_max   = valid_max
     v.standard_name = var_name
+    # Mask land cells across every time/depth so the frontend's colormap discard (val ==
+    # _FillValue) hides them instead of painting an ocean variable over dry land.
+    data = data.copy()
+    data[:, :, LAND_MASK] = -30000.0
     v[:] = data
 
     ds.close()
@@ -225,7 +236,10 @@ def write_netcdf_multi(path: Path, variables: list[dict]):
         v.standard_name = spec.get("standard_name", spec["name"])
         v.valid_min     = spec["valid_min"]
         v.valid_max     = spec["valid_max"]
-        v[:] = spec["data"]
+        # Same land mask as write_netcdf() — see its comment.
+        data = spec["data"].copy()
+        data[:, :, LAND_MASK] = -30000.0
+        v[:] = data
 
     ds.close()
     print(f"  ✓  Written: {path}  ({path.stat().st_size / 1024:.0f} kB)  [vars: {[s['name'] for s in variables]}]")
@@ -273,6 +287,28 @@ if __name__ == "__main__":
              "units": "m s-1", "standard_name": "northward_sea_water_velocity",
              "valid_min": -2.0, "valid_max": 2.0},
         ],
+    )
+
+    # registry/copernicus_temp.yaml and copernicus_salinity.yaml have no fixture generator of
+    # their own — they're labeled "LIVE" and fall back to a real Copernicus Marine fetch outside
+    # this bbox (needs COPERNICUS_USERNAME/PASSWORD), but had nothing at all for the demo region
+    # without those credentials. Reuse the same physically-grounded BoB fields above under the
+    # variable names/attrs those manifests actually declare (thetao/so — Copernicus' real CF
+    # names), rather than leaving them with zero local data.
+    print("Generating Copernicus-labeled temperature field (reuses HYCOM field above)...")
+    write_netcdf(
+        OUT_DIR / "copernicus_bob_temp.nc",
+        "thetao", T,
+        "Sea Water Potential Temperature", "degrees_C",
+        valid_min=-10.0, valid_max=40.0,
+    )
+
+    print("Generating Copernicus-labeled salinity field (reuses HYCOM field above)...")
+    write_netcdf(
+        OUT_DIR / "copernicus_bob_salinity.nc",
+        "so", S,
+        "Sea Water Salinity", "1e-3",
+        valid_min=0.0, valid_max=50.0,
     )
 
     print("\nDone! Fixture NetCDF files written successfully.")
