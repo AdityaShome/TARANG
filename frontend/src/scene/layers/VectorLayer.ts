@@ -120,6 +120,10 @@ export class VectorLayer implements Layer {
     }
   }
 
+  setVisible(visible: boolean) {
+    if (this.group) this.group.visible = visible
+  }
+
   dispose() {
     if (this.abortController) this.abortController.abort()
     if (this.mesh && this.group) {

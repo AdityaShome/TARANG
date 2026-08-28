@@ -36,8 +36,17 @@ export async function geocodeRegion(query: string, signal?: AbortSignal): Promis
       const [south, north, west, east] = (r.boundingbox as string[]).map(Number)
       let bbox: [number, number, number, number] = [west, south, east, north]
 
-      // Clamp a near-zero-area or ocean-sized box to a sane span around its centre.
-      const MIN_SPAN = 2, MAX_SPAN = 20  // degrees
+      // Clamp only a near-zero-area box (e.g. a single street address) up to a visible size.
+      // MAX_SPAN used to be 20deg, which crushed genuinely huge features — searching "Pacific
+      // Ocean" (Nominatim returns a ~150+deg-wide box) got shrunk to a tiny 20deg square, i.e.
+      // a real ocean search rendered as a barely-there patch. 90deg still bounds truly runaway
+      // results (a bad geocode matching most of the globe) without nuking legitimate large seas.
+      // Note: this bbox format has no antimeridian wraparound (assumes minLon < maxLon), so a
+      // basin actually centred on the 180deg line (like the Pacific) still renders as whichever
+      // arbitrary non-wrapping slice Nominatim's own bounding box happens to fall on — a real
+      // limitation of the [minLon,minLat,maxLon,maxLat] convention used throughout this app, not
+      // fixable by adjusting the clamp alone.
+      const MIN_SPAN = 2, MAX_SPAN = 90  // degrees
       const [minLon, minLat, maxLon, maxLat] = bbox
       const spanLon = maxLon - minLon
       const spanLat = maxLat - minLat

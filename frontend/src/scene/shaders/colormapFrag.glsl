@@ -15,10 +15,15 @@ vec3 mix5(float t, vec3 c0, vec3 c1, vec3 c2, vec3 c3, vec3 c4) {
     t = clamp(t, 0.0, 1.0) * 4.0;
     float seg = floor(t);
     float f = t - seg;
-    if (seg < 1.0) return mix(c0, c1, f);
-    if (seg < 2.0) return mix(c1, c2, f);
-    if (seg < 3.0) return mix(c2, c3, f);
-    return mix(c3, c4, f);
+    if (seg < 1.0) {
+        return mix(c0, c1, f);
+    } else if (seg < 2.0) {
+        return mix(c1, c2, f);
+    } else if (seg < 3.0) {
+        return mix(c2, c3, f);
+    } else {
+        return mix(c3, c4, f);
+    }
 }
 
 vec3 viridis(float t) {
@@ -54,11 +59,22 @@ vec3 jet(float t) {
 }
 
 vec3 applyColormap(float t) {
-    if (u_colormap < 0.5) return viridis(t);
-    if (u_colormap < 1.5) return plasma(t);
-    if (u_colormap < 2.5) return magma(t);
-    if (u_colormap < 3.5) return inferno(t);
-    return jet(t);
+    // else-if (not independent `if (cond) return`) so every backend's control-flow analysis can
+    // see this is exhaustive — the ANGLE GLSL->HLSL translator (used on the D3D11 WebGL backend)
+    // flagged the independent-if form as "use of potentially uninitialized variable" even though
+    // every branch returns, because it flattens early returns into a temp-variable pattern and
+    // couldn't statically prove the conditions cover all cases without an explicit else.
+    if (u_colormap < 0.5) {
+        return viridis(t);
+    } else if (u_colormap < 1.5) {
+        return plasma(t);
+    } else if (u_colormap < 2.5) {
+        return magma(t);
+    } else if (u_colormap < 3.5) {
+        return inferno(t);
+    } else {
+        return jet(t);
+    }
 }
 
 void main() {

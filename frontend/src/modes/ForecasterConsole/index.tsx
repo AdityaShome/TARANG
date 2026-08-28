@@ -7,6 +7,8 @@ import { ProfilePopover } from '../../charts/ProfilePopover'
 import { Legend } from '../../components/Legend'
 import { LanguageSwitcher } from '../../components/LanguageSwitcher'
 import { useT } from '../../i18n/useT'
+import { GlossaryPanel } from '../../components/GlossaryPanel'
+import { useState } from 'react'
 
 /**
  * Forecaster Console — Power-user UI mode
@@ -17,21 +19,37 @@ import { useT } from '../../i18n/useT'
  */
 export function ForecasterConsole() {
   const selectedPlatformId = useTarangStore(s => s.selectedPlatformId)
+  const hasSearchedRegion  = useTarangStore(s => s.hasSearchedRegion)
   const setUIMode          = useTarangStore(s => s.setUIMode)
   const t = useT()
+  const [showGlossary, setShowGlossary] = useState(false)
 
   return (
     <div id="forecaster-console" style={styles.container}>
       {/* ── 3D Scene (shared render core) ──────────────────────────────── */}
       <div style={styles.sceneWrapper}>
         <SceneManager />
+        {!hasSearchedRegion && (
+          <div id="search-hint" style={styles.searchHint}>
+            {t('searchHint')}
+          </div>
+        )}
       </div>
 
       {/* ── Control Sidebar ────────────────────────────────────────────── */}
       <aside id="control-panel" style={styles.sidebar}>
         <div style={styles.brandHeader}>
           <div style={styles.brandRow}>
-            <span style={styles.brandText}>TARANG</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={styles.brandText}>TARANG</span>
+              <button 
+                onClick={() => setShowGlossary(true)}
+                style={{ background: 'rgba(0, 212, 255, 0.1)', border: '1px solid rgba(0, 212, 255, 0.3)', color: '#00d4ff', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '12px' }}
+                title="Glossary"
+              >
+                ?
+              </button>
+            </div>
             <LanguageSwitcher />
           </div>
           <span style={styles.brandSub}>{t('brandSub')}</span>
@@ -60,6 +78,9 @@ export function ForecasterConsole() {
       
       {/* ── Thermal Legend ─────────────────────────────────────────────── */}
       <Legend />
+      
+      {/* ── Glossary Panel ─────────────────────────────────────────────── */}
+      {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
     </div>
   )
 }
@@ -76,6 +97,22 @@ const styles: Record<string, React.CSSProperties> = {
     flex:     1,
     position: 'relative',
     overflow: 'hidden',
+  },
+  searchHint: {
+    position:       'absolute',
+    top:            '20px',
+    left:           '50%',
+    transform:      'translateX(-50%)',
+    padding:        '10px 20px',
+    background:     'rgba(8, 15, 30, 0.85)',
+    backdropFilter: 'blur(10px)',
+    border:         '1px solid rgba(0, 180, 255, 0.3)',
+    borderRadius:   '8px',
+    color:          '#00d4ff',
+    fontSize:       '13px',
+    fontWeight:     '500',
+    pointerEvents:  'none',
+    zIndex:         5,
   },
   sidebar: {
     width:            '320px',

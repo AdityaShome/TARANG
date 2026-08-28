@@ -2,20 +2,9 @@ import * as THREE from 'three'
 import { Layer, LayerParams } from '../LayerManager'
 import { fetchIsosurface } from '../../api/client'
 import { useTarangStore } from '../../state/store'
+import { EARTH_RADIUS, surfaceBasis } from './sphereUtils'
 
-// Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ.
-const EARTH_RADIUS = 200
 const DEG_TO_WORLD = (Math.PI * EARTH_RADIUS) / 180
-
-function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 {
-  const phi = (90 - lat) * (Math.PI / 180)
-  const theta = (lon + 180) * (Math.PI / 180)
-  return new THREE.Vector3(
-    -r * Math.sin(phi) * Math.cos(theta),
-     r * Math.cos(phi),
-     r * Math.sin(phi) * Math.sin(theta),
-  )
-}
 
 export class IsosurfaceLayer implements Layer {
   private mesh: THREE.Mesh | null = null
@@ -90,8 +79,11 @@ export class IsosurfaceLayer implements Layer {
 
         const centerLat = (minLat + maxLat) / 2
         const centerLon = (minLon + maxLon) / 2
-        const outward = latLonToXYZ(centerLat, centerLon, 1)
-        this.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), outward)
+        const { east, north, outward } = surfaceBasis(centerLat, centerLon)
+        // Local X=depth, Y=lat(height), Z=lon(width) — same shared basis VolumeLayer uses, just
+        // with depth mapped to local X instead of Z (forced by marching_cubes' voxel index
+        // order). See sphereUtils.ts for why this must be a full three-axis basis.
+        this.mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(outward, north, east))
         this.mesh.position.copy(outward).multiplyScalar(EARTH_RADIUS)
 
         this.scene!.add(this.mesh)

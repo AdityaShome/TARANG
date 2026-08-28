@@ -14,6 +14,8 @@ export function SearchBar() {
   const searchRegion     = useTarangStore(s => s.searchRegion)
   const regionLabel      = useTarangStore(s => s.regionLabel)
   const isFetchingLayers = useTarangStore(s => s.isFetchingLayers)
+  const mapSelectMode    = useTarangStore(s => s.mapSelectMode)
+  const setMapSelectMode = useTarangStore(s => s.setMapSelectMode)
 
   const [query, setQuery]       = useState('')
   const [results, setResults]   = useState<GeocodeResult[]>([])
@@ -73,6 +75,30 @@ export function SearchBar() {
         </button>
       </div>
 
+      <div style={styles.pickRow}>
+        <button
+          id="map-select-click"
+          style={{ ...styles.pickBtn, ...(mapSelectMode === 'click' ? styles.pickBtnActive : {}) }}
+          onClick={() => setMapSelectMode(mapSelectMode === 'click' ? 'off' : 'click')}
+          title={t('mapPickClickHint')}
+        >
+          📍 {t('mapPickClick')}
+        </button>
+        <button
+          id="map-select-drag"
+          style={{ ...styles.pickBtn, ...(mapSelectMode === 'drag' ? styles.pickBtnActive : {}) }}
+          onClick={() => setMapSelectMode(mapSelectMode === 'drag' ? 'off' : 'drag')}
+          title={t('mapPickDragHint')}
+        >
+          ▭ {t('mapPickDrag')}
+        </button>
+      </div>
+      {mapSelectMode !== 'off' && (
+        <div style={styles.pickHint}>
+          {mapSelectMode === 'click' ? t('mapPickClickHint') : t('mapPickDragHint')}
+        </div>
+      )}
+
       {regionLabel
         ? <div style={styles.currentRegion}>📍 {regionLabel}</div>
         : <div style={styles.noRegion}>{t('noRegionSelected')}</div>}
@@ -113,6 +139,16 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(0, 180, 255, 0.15)', border: '1px solid rgba(0, 180, 255, 0.3)',
     borderRadius: '6px', color: '#00d4ff', padding: '6px 12px', cursor: 'pointer', fontSize: '13px',
   },
+  pickRow: { display: 'flex', gap: '6px' },
+  pickBtn: {
+    flex: 1, background: 'rgba(0, 30, 60, 0.6)', border: '1px solid rgba(0, 180, 255, 0.2)',
+    borderRadius: '6px', color: 'rgba(160, 196, 232, 0.8)', padding: '5px 8px',
+    cursor: 'pointer', fontSize: '11px',
+  },
+  pickBtnActive: {
+    background: 'rgba(0, 180, 255, 0.25)', border: '1px solid rgba(0, 212, 255, 0.6)', color: '#00d4ff',
+  },
+  pickHint: { fontSize: '10px', color: 'rgba(0, 212, 255, 0.8)', fontStyle: 'italic' },
   currentRegion: { fontSize: '11px', color: 'rgba(160, 196, 232, 0.7)' },
   noRegion: { fontSize: '11px', color: 'rgba(160, 196, 232, 0.5)', fontStyle: 'italic' },
   fetching: { fontSize: '11px', color: '#00d4ff', lineHeight: '1.4' },

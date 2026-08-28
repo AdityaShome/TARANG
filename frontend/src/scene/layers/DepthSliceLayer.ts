@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { Layer, LayerParams } from '../LayerManager'
 import { fetchSlice } from '../../api/client'
 import { useTarangStore } from '../../state/store'
+import { computeDataRange } from './dataStats'
 
 import vertShader from '../shaders/depthSliceVert.glsl?raw'
 import fragShader from '../shaders/colormapFrag.glsl?raw'
@@ -98,9 +99,12 @@ export class DepthSliceLayer implements Layer {
         this.hasData = true
         this.mesh.visible = this.wantVisible
 
-        // Apply config from state/params
-        const userClim = [state.colormap.min, state.colormap.max]
-        this.material.uniforms.u_clim.value.set(userClim[0], userClim[1])
+        // Auto-contrast-stretch to the actual fetched data's range, not the dataset's global
+        // valid_min/valid_max — see dataStats.ts for why (a small region's real variance is a
+        // sliver of the full range, so the colormap would otherwise read as flat/uncolored).
+        const [dataMin, dataMax] = computeDataRange(data, header.missing_value, header.valid_min, header.valid_max)
+        this.material.uniforms.u_clim.value.set(dataMin, dataMax)
+        useTarangStore.getState().setColormap({ min: dataMin, max: dataMax })
         this.material.uniforms.u_missing.value = header.missing_value ?? -9999.0
         this.material.uniforms.u_colormap.value = COLORMAP_INDEX[state.colormap.name] ?? 0
         this.material.uniforms.u_log_scale.value = state.colormap.logScale ? 1 : 0
