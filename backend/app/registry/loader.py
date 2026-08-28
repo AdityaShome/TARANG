@@ -81,8 +81,8 @@ class RegistryLoader:
         # ── Register SIGHUP handler (POSIX only) ─────────────────────────────
         try:
             signal.signal(signal.SIGHUP, lambda sig, frame: self.reload())
-        except (AttributeError, OSError):
-            pass  # Not available on Windows — skip gracefully
+        except (AttributeError, OSError, ValueError):
+            pass  # no SIGHUP on Windows / not the main thread (e.g. under TestClient)
 
     def _load_one(self, path: Path) -> None:
         """Parse and validate a single YAML manifest file."""

@@ -3,9 +3,7 @@ import { Layer, LayerParams } from '../LayerManager'
 import { fetchIsosurface } from '../../api/client'
 import { useTarangStore } from '../../state/store'
 
-// Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ exactly — see the identical
-// constants in VolumeLayer.ts, which had (and was fixed for) this exact same bug: a mesh
-// positioned at the world origin instead of on the searched region's patch of the globe.
+// Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ.
 const EARTH_RADIUS = 200
 const DEG_TO_WORLD = (Math.PI * EARTH_RADIUS) / 180
 
@@ -23,6 +21,7 @@ export class IsosurfaceLayer implements Layer {
   private mesh: THREE.Mesh | null = null
   private scene: THREE.Scene | null = null
   private abortController: AbortController | null = null
+  private wantVisible = true
 
   build(scene: THREE.Scene) {
     this.scene = scene
@@ -53,17 +52,10 @@ export class IsosurfaceLayer implements Layer {
 
         const geometry = new THREE.BufferGeometry()
 
-        // marching_cubes verts are indexed into the (depth, lat, lon) voxel array it ran on —
-        // x=depth index, y=lat index, z=lon index, each 0..(axis size - 1). volume_shape (added
-        // to the backend header specifically for this) gives those actual axis sizes; without it
-        // there's nothing to scale/position verts by (this used to reference undefined variables
-        // and crash on every isosurface request — see git history).
+        // marching_cubes verts are voxel indices into a (depth, lat, lon) grid.
         const [depthSize, latSize, lonSize] = header.volume_shape
 
-        // Centre the lat/lon axes on the geometry's own origin (they start at index 0, i.e. one
-        // corner, not centred) so the patch ends up centred under the region rather than offset
-        // to one side. Depth is deliberately left un-centred: index 0 = shallowest = the globe
-        // surface, and we want that at the mesh's local origin so positioning below is simple.
+        // Centre lat/lon; leave depth un-centred (index 0 = surface = local origin).
         geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3))
         geometry.translate(0, -latSize / 2, -lonSize / 2)
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
@@ -78,7 +70,8 @@ export class IsosurfaceLayer implements Layer {
         })
 
         this.mesh = new THREE.Mesh(geometry, material)
-        this.mesh.frustumCulled = false // see the identical note in VolumeLayer.ts/DepthSliceLayer.ts
+        this.mesh.frustumCulled = false
+        this.mesh.visible = this.wantVisible   // a render-mode switch may have landed mid-fetch
 
         const [minLon, minLat, maxLon, maxLat] = params.bbox!
         const widthDeg = maxLon - minLon
@@ -88,9 +81,7 @@ export class IsosurfaceLayer implements Layer {
         const vExag = state.colormap.verticalExaggeration || 50
         const depthScale = (maxDepthM / 111000) * vExag
 
-        // Same spherical placement as VolumeLayer.ts: scale each voxel-index axis into real
-        // world units, then align the mesh's local +X (the depth axis) with the outward normal
-        // at the region's centre so it sits tangent to the globe surface with depth going inward.
+        // Scale voxel-index axes to world units; align local +X (depth) with the outward normal.
         this.mesh.scale.set(
           (depthScale * DEG_TO_WORLD) / depthSize,
           (heightDeg * DEG_TO_WORLD) / latSize,
@@ -109,6 +100,11 @@ export class IsosurfaceLayer implements Layer {
         if (err.name !== 'AbortError') console.error(err)
       }
     }
+  }
+
+  setVisible(visible: boolean) {
+    this.wantVisible = visible
+    if (this.mesh) this.mesh.visible = visible
   }
 
   dispose() {

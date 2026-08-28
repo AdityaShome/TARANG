@@ -1,24 +1,24 @@
 precision highp float;
 precision highp sampler3D;
 
-in vec3 vOrigin;
-in vec3 vDirection;
+in vec3 vWorldPos;
 
 uniform sampler3D u_data;
+uniform mat4 u_modelInv;     // world → local [0,1] box space
+uniform vec3 u_regionNormal; // globe centre → region centre (world)
 uniform vec2 u_clim;
 uniform float u_opacity;
 uniform float u_missing;
-uniform int u_renderstyle; // 0: MIP, 1: ISO
+uniform int u_renderstyle;   // 0: MIP, 1: ISO
 uniform float u_iso_threshold;
-uniform float u_colormap;   // 0=viridis 1=plasma 2=magma 3=inferno 4=jet — see colormapFrag.glsl
-uniform float u_log_scale;  // 0=linear 1=log
+uniform float u_colormap;    // 0=viridis 1=plasma 2=magma 3=inferno 4=jet — see colormapFrag.glsl
+uniform float u_log_scale;   // 0=linear 1=log
+uniform int u_debug;         // 0=off  1=hit test  2=entry uvw  3=valid-sample count  4=raw max
 
 
 layout(location = 0) out highp vec4 pc_fragColor;
 
-// Same palette functions as colormapFrag.glsl (DepthSliceLayer) — kept in sync so a colormap
-// picked in the UI looks the same whether you're looking at a Slice or a Volume render. See
-// that file for the "why 5-stop mix, why these particular stops" rationale.
+// Palette — kept in sync with colormapFrag.glsl.
 vec3 mix5(float t, vec3 c0, vec3 c1, vec3 c2, vec3 c3, vec3 c4) {
     t = clamp(t, 0.0, 1.0) * 4.0;
     float seg = floor(t);
@@ -28,36 +28,16 @@ vec3 mix5(float t, vec3 c0, vec3 c1, vec3 c2, vec3 c3, vec3 c4) {
     if (seg < 3.0) return mix(c2, c3, f);
     return mix(c3, c4, f);
 }
-vec3 viridis(float t) {
-    return mix5(t,
-        vec3(0.267, 0.005, 0.329), vec3(0.231, 0.322, 0.545),
-        vec3(0.128, 0.567, 0.551), vec3(0.369, 0.789, 0.383),
-        vec3(0.993, 0.906, 0.144));
-}
-vec3 plasma(float t) {
-    return mix5(t,
-        vec3(0.051, 0.031, 0.529), vec3(0.494, 0.012, 0.658),
-        vec3(0.799, 0.279, 0.471), vec3(0.973, 0.585, 0.255),
-        vec3(0.940, 0.975, 0.131));
-}
-vec3 magma(float t) {
-    return mix5(t,
-        vec3(0.001, 0.001, 0.016), vec3(0.231, 0.059, 0.439),
-        vec3(0.549, 0.161, 0.506), vec3(0.871, 0.288, 0.409),
-        vec3(0.987, 0.991, 0.749));
-}
-vec3 inferno(float t) {
-    return mix5(t,
-        vec3(0.001, 0.001, 0.016), vec3(0.259, 0.039, 0.408),
-        vec3(0.576, 0.149, 0.404), vec3(0.867, 0.318, 0.227),
-        vec3(0.988, 1.000, 0.643));
-}
+vec3 viridis(float t) { return mix5(t, vec3(0.267,0.005,0.329), vec3(0.231,0.322,0.545), vec3(0.128,0.567,0.551), vec3(0.369,0.789,0.383), vec3(0.993,0.906,0.144)); }
+vec3 plasma(float t)  { return mix5(t, vec3(0.051,0.031,0.529), vec3(0.494,0.012,0.658), vec3(0.799,0.279,0.471), vec3(0.973,0.585,0.255), vec3(0.940,0.975,0.131)); }
+vec3 magma(float t)   { return mix5(t, vec3(0.001,0.001,0.016), vec3(0.231,0.059,0.439), vec3(0.549,0.161,0.506), vec3(0.871,0.288,0.409), vec3(0.987,0.991,0.749)); }
+vec3 inferno(float t) { return mix5(t, vec3(0.001,0.001,0.016), vec3(0.259,0.039,0.408), vec3(0.576,0.149,0.404), vec3(0.867,0.318,0.227), vec3(0.988,1.000,0.643)); }
 vec3 jetMap(float t) {
     t = clamp(t, 0.0, 1.0);
-    float r = clamp(min(1.5 - abs(2.0 * t - 1.5), 1.0), 0.0, 1.0);
-    float g = clamp(min(1.5 - abs(2.0 * t - 1.0), 1.0), 0.0, 1.0);
-    float b = clamp(min(1.5 - abs(2.0 * t - 0.5), 1.0), 0.0, 1.0);
-    return vec3(r, g, b);
+    return vec3(
+        clamp(min(1.5 - abs(2.0*t - 1.5), 1.0), 0.0, 1.0),
+        clamp(min(1.5 - abs(2.0*t - 1.0), 1.0), 0.0, 1.0),
+        clamp(min(1.5 - abs(2.0*t - 0.5), 1.0), 0.0, 1.0));
 }
 vec3 safeColormap(float t) {
     if (u_colormap < 0.5) return viridis(t);
@@ -68,71 +48,87 @@ vec3 safeColormap(float t) {
 }
 float normalize_val(float val) {
     if (u_log_scale > 0.5) {
-        float epsilon = 1e-3;
-        float shiftedVal = max(val - u_clim.x + epsilon, epsilon);
-        float shiftedMax = max(u_clim.y - u_clim.x + epsilon, epsilon * 2.0);
-        return clamp(log(shiftedVal) / log(shiftedMax), 0.0, 1.0);
+        float eps = 1e-3;
+        float sv = max(val - u_clim.x + eps, eps);
+        float sm = max(u_clim.y - u_clim.x + eps, eps * 2.0);
+        return clamp(log(sv) / log(sm), 0.0, 1.0);
     }
     return clamp((val - u_clim.x) / (u_clim.y - u_clim.x), 0.0, 1.0);
 }
 
-vec2 hitBox(vec3 orig, vec3 dir) {
-    vec3 box_min = vec3(-0.5);
-    vec3 box_max = vec3(0.5);
-    vec3 inv_dir = 1.0 / dir;
-    vec3 tmin_tmp = (box_min - orig) * inv_dir;
-    vec3 tmax_tmp = (box_max - orig) * inv_dir;
-    vec3 tmin = min(tmin_tmp, tmax_tmp);
-    vec3 tmax = max(tmin_tmp, tmax_tmp);
-    float t0 = max(tmin.x, max(tmin.y, tmin.z));
-    float t1 = min(tmax.x, min(tmax.y, tmax.z));
-    return vec2(t0, t1);
+// Slab intersection against the unit box [0,1]^3 for ray ro + t*rd.
+vec2 hitBox(vec3 ro, vec3 rd) {
+    vec3 safeRd = mix(rd, vec3(1e-6), lessThan(abs(rd), vec3(1e-6)));  // avoid 1/0 → NaN
+    vec3 inv = 1.0 / safeRd;
+    vec3 t0s = (vec3(0.0) - ro) * inv;
+    vec3 t1s = (vec3(1.0) - ro) * inv;
+    vec3 tmin = min(t0s, t1s);
+    vec3 tmax = max(t0s, t1s);
+    return vec2(max(max(tmin.x, tmin.y), tmin.z),
+                min(min(tmax.x, tmax.y), tmax.z));
 }
 
-float sample1(vec3 p) {
-    return texture(u_data, p).r;
+float sample1(vec3 uvw) {
+    return texture(u_data, uvw).r;
 }
 
 void main() {
-    vec3 rayDir = normalize(vDirection);
-    vec2 bounds = hitBox(vOrigin, rayDir);
-    
-    if (bounds.x > bounds.y) discard;
+    // Fade out (then discard) once the region spins past the globe's limb — depthTest is
+    // off, so it would otherwise bleed through the front of the Earth.
+    float facing = smoothstep(0.0, 0.28, dot(u_regionNormal, normalize(cameraPosition)));
+    if (facing <= 0.0) discard;
 
+    // Ray in local [0,1] box space: origin + direction transformed by u_modelInv
+    // (w=0 direction applies rotation + non-uniform inverse-scale; rd is left unnormalized
+    // so `t` is a consistent parametric coord across the box).
+    vec3 rdWorld = normalize(vWorldPos - cameraPosition);
+    vec3 ro = (u_modelInv * vec4(cameraPosition, 1.0)).xyz + 0.5;
+    vec3 rd = (u_modelInv * vec4(rdWorld, 0.0)).xyz;
+
+    vec2 bounds = hitBox(ro, rd);
     bounds.x = max(bounds.x, 0.0);
-    vec3 p = vOrigin + bounds.x * rayDir;
-    vec3 inc = 1.0 / abs(rayDir);
-    float delta = min(inc.x, min(inc.y, inc.z)) / 200.0;
-    vec3 rayStep = rayDir * delta;
-    
-    float maxValue = -99999.0;
-    vec4 accColor = vec4(0.0);
 
-    for (int i = 0; i < 500; i++) {
-        float t = bounds.x + float(i) * delta;
-        if (t > bounds.y || accColor.a >= 0.95) break;
+    if (bounds.x >= bounds.y) discard;   // ray misses the box
 
-        vec3 uvw = p + vec3(0.5);
+    const int STEPS = 320;
+    float dt = (bounds.y - bounds.x) / float(STEPS);
+
+    float maxValue = -1e20;
+    int validSamples = 0;
+    vec4 isoColor = vec4(0.0);
+
+    for (int i = 0; i < STEPS; i++) {
+        float t = bounds.x + (float(i) + 0.5) * dt;
+        vec3 uvw = clamp(ro + t * rd, 0.0, 1.0);
         float val = sample1(uvw);
 
-        if (val != u_missing && val > -999.0 && val < 9999.0) {
-            if (u_renderstyle == 0) { // MIP
-                if (val > maxValue) maxValue = val;
-            } else { // ISO
-                if (val >= u_iso_threshold) {
-                    accColor = vec4(safeColormap(normalize_val(val)), u_opacity);
-                    break;
-                }
+        bool valid = (val == val) && (val != u_missing) && (val > -1.0e4) && (val < 1.0e4);
+        if (valid) {
+            validSamples++;
+            if (u_renderstyle == 0) {
+                maxValue = max(maxValue, val);
+            } else if (val >= u_iso_threshold && isoColor.a == 0.0) {
+                isoColor = vec4(safeColormap(normalize_val(val)), u_opacity);
             }
         }
-        p += rayStep;
     }
+
+    // Debug overlays (?voldebug=1..4): box hit / entry uvw / valid-sample count / raw max.
+    if (u_debug == 1) { pc_fragColor = vec4(0.0, 1.0, 1.0, 0.35); return; }
+    if (u_debug == 2) { pc_fragColor = vec4(clamp(ro + bounds.x * rd, 0.0, 1.0), 0.9); return; }
+    if (u_debug == 3) { float f = float(validSamples) / float(STEPS); pc_fragColor = vec4(1.0 - f, f, 0.0, 0.9); return; }
+    if (u_debug == 4) { pc_fragColor = vec4(vec3(clamp(maxValue / 40.0, 0.0, 1.0)), 0.9); return; }
 
     if (u_renderstyle == 0) {
-        if (maxValue == -99999.0) discard;
-        accColor = vec4(safeColormap(normalize_val(maxValue)), u_opacity);
+        if (validSamples == 0) {
+            // Box crossed but no usable sample — loud magenta so this failure stays visible.
+            pc_fragColor = vec4(1.0, 0.0, 1.0, 0.85 * facing);
+            return;
+        }
+        pc_fragColor = vec4(safeColormap(normalize_val(maxValue)), u_opacity * facing);
+        return;
     }
 
-    if (accColor.a == 0.0) discard;
-    pc_fragColor = accColor;
+    if (isoColor.a == 0.0) discard;
+    pc_fragColor = vec4(isoColor.rgb, isoColor.a * facing);
 }

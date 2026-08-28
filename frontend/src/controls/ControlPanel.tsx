@@ -10,7 +10,7 @@ import type { TranslationKey } from '../i18n/translations'
 export function ControlPanel() {
   const {
     sources, activeSourceId, setActiveSource,
-    activeVar, setActiveVar,
+    activeVar, setActiveVar, availableVariables, cfMetadata,
     activeDepthIdx, setActiveDepthIdx, depthLevels,
     activeTimeIdx, setActiveTimeIdx, timeSteps,
     renderMode, setRenderMode,
@@ -22,6 +22,18 @@ export function ControlPanel() {
 
   // Debounced depth/time slider handlers (150ms — §10)
   const debouncedDepth = useMemo(() => debounce(setActiveDepthIdx, 150), [])
+
+  // Variable dropdown options, labelled with CF long_name + units when available.
+  const variableOptions = useMemo(() => {
+    const names = availableVariables.length ? availableVariables : (activeVar ? [activeVar] : [])
+    return names.map(v => {
+      const cf = cfMetadata[v]
+      const label = cf?.long_name && cf.long_name !== v
+        ? (cf.units && cf.units !== 'unknown' ? `${cf.long_name} (${cf.units})` : cf.long_name)
+        : v
+      return { value: v, label }
+    })
+  }, [availableVariables, cfMetadata, activeVar])
   const [isPlaying, setIsPlaying] = useState(false)
 
   useEffect(() => {
@@ -52,13 +64,14 @@ export function ControlPanel() {
         />
       </Section>
 
-      {/* ── Variable Selector ───────────────────────────────────────── */}
+      {/* Variable Selector — one entry per variable the source exposes; disabled if only one. */}
       <Section label={t('variable')}>
         <Select
           id="var-select"
           value={activeVar}
+          disabled={variableOptions.length <= 1}
           onChange={e => setActiveVar(e.target.value)}
-          options={[{ value: activeVar, label: activeVar }]}
+          options={variableOptions}
         />
       </Section>
 
@@ -224,13 +237,20 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
-function Select({ id, value, onChange, options }: {
+function Select({ id, value, onChange, options, disabled }: {
   id: string; value: string;
   onChange: React.ChangeEventHandler<HTMLSelectElement>
   options: { value: string; label: string }[]
+  disabled?: boolean
 }) {
   return (
-    <select id={id} value={value} onChange={onChange} style={styles.select}>
+    <select
+      id={id}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      style={{ ...styles.select, ...(disabled ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }}
+    >
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )

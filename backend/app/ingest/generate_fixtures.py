@@ -109,6 +109,32 @@ def make_salinity() -> np.ndarray:
 
     return S
 
+# ── Realistic current field (m/s) ─────────────────────────────────────────────
+def make_currents() -> tuple[np.ndarray, np.ndarray]:
+    """(u, v) 4D (time, depth, lat, lon): a plausible BoB gyre + coastal jet, decaying with depth."""
+    U = np.zeros((N_TIME, NDEP, NLAT, NLON), dtype=np.float32)
+    V = np.zeros((N_TIME, NDEP, NLAT, NLON), dtype=np.float32)
+
+    # Gyre centre ~90°E, 15°N; streamfunction ψ ∝ exp(-r²), (u,v) = (-∂ψ/∂y, ∂ψ/∂x)
+    r2 = ((LONS - 90) ** 2 + (LATS - 15) ** 2) / 60.0
+    psi = np.exp(-r2)
+    u_surf = -(-2 * (LATS - 15) / 60.0) * psi        # -∂ψ/∂y
+    v_surf = (-2 * (LONS - 90) / 60.0) * psi         #  ∂ψ/∂x
+    # Coastal jet along the western boundary (~80-82°E)
+    jet = 0.8 * np.exp(-((LONS - 81) ** 2) / 4.0) * np.clip((LATS - 6) / 12.0, 0, 1)
+    u_surf = u_surf * 1.2
+    v_surf = (v_surf + jet) * 1.2
+
+    for ti in range(N_TIME):
+        phase = 1.0 + 0.1 * np.sin(2 * np.pi * ti / 30)
+        for di, depth in enumerate(DEP):
+            decay = np.exp(-depth / 250.0)   # currents weaken with depth
+            U[ti, di] = np.clip(u_surf * phase * decay, -2.0, 2.0)
+            V[ti, di] = np.clip(v_surf * phase * decay, -2.0, 2.0)
+
+    return U, V
+
+
 # ── Write NetCDF4 files ────────────────────────────────────────────────────────
 def write_netcdf(path: Path, var_name: str, data: np.ndarray,
                  long_name: str, units: str, valid_min: float, valid_max: float):
@@ -158,6 +184,53 @@ def write_netcdf(path: Path, var_name: str, data: np.ndarray,
     print(f"  ✓  Written: {path}  ({path.stat().st_size / 1024:.0f} kB)")
 
 
+def write_netcdf_multi(path: Path, variables: list[dict]):
+    """Write several data variables into one CF NetCDF (the combined HYCOM fixture).
+    Each entry: {name, data, long_name, units, standard_name, valid_min, valid_max}."""
+    ds = nc.Dataset(str(path), "w", format="NETCDF4")
+    ds.Conventions = "CF-1.8"
+    ds.title       = "TARANG HYCOM GLBy0.08 Bay of Bengal subset — SIH 2026 PS 26067"
+    ds.institution = "MoES/INCOIS"
+    ds.source      = "Climatological simulation for TARANG SIH demo (stand-in for HYCOM GLBy0.08 expt_93.0)"
+    ds.history     = f"Generated {datetime.utcnow().isoformat()}Z by generate_fixtures.py"
+
+    ds.createDimension("time",      N_TIME)
+    ds.createDimension("depth",     NDEP)
+    ds.createDimension("latitude",  NLAT)
+    ds.createDimension("longitude", NLON)
+
+    tv = ds.createVariable("time", "f8", ("time",))
+    tv.units = "days since 2026-08-01 00:00:00"
+    tv.calendar = "gregorian"
+    tv[:] = np.arange(N_TIME, dtype=np.float64)
+
+    dv = ds.createVariable("depth", "f4", ("depth",))
+    dv.units = "m"
+    dv.positive = "down"
+    dv[:] = DEP
+
+    latv = ds.createVariable("latitude", "f4", ("latitude",))
+    latv.units = "degrees_north"
+    latv[:] = LAT
+    lonv = ds.createVariable("longitude", "f4", ("longitude",))
+    lonv.units = "degrees_east"
+    lonv[:] = LON
+
+    for spec in variables:
+        v = ds.createVariable(spec["name"], "f4",
+                              ("time", "depth", "latitude", "longitude"),
+                              fill_value=-30000.0, zlib=True, complevel=6)
+        v.long_name     = spec["long_name"]
+        v.units         = spec["units"]
+        v.standard_name = spec.get("standard_name", spec["name"])
+        v.valid_min     = spec["valid_min"]
+        v.valid_max     = spec["valid_max"]
+        v[:] = spec["data"]
+
+    ds.close()
+    print(f"  ✓  Written: {path}  ({path.stat().st_size / 1024:.0f} kB)  [vars: {[s['name'] for s in variables]}]")
+
+
 if __name__ == "__main__":
     print("TARANG fixture generator — Indian Ocean / Bay of Bengal")
     print(f"Output → {OUT_DIR.resolve()}\n")
@@ -178,6 +251,28 @@ if __name__ == "__main__":
         "salinity", S,
         "Sea Water Practical Salinity", "1",
         valid_min=28.0, valid_max=36.0,
+    )
+
+    print("Generating currents field...")
+    U, V = make_currents()
+
+    print("Writing combined multi-variable HYCOM fixture...")
+    write_netcdf_multi(
+        OUT_DIR / "hycom_bob.nc",
+        [
+            {"name": "water_temp", "data": T, "long_name": "Sea Water Temperature",
+             "units": "degC", "standard_name": "sea_water_temperature",
+             "valid_min": 1.0, "valid_max": 32.0},
+            {"name": "salinity", "data": S, "long_name": "Sea Water Practical Salinity",
+             "units": "1", "standard_name": "sea_water_practical_salinity",
+             "valid_min": 28.0, "valid_max": 36.0},
+            {"name": "water_u", "data": U, "long_name": "Eastward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "eastward_sea_water_velocity",
+             "valid_min": -2.0, "valid_max": 2.0},
+            {"name": "water_v", "data": V, "long_name": "Northward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "northward_sea_water_velocity",
+             "valid_min": -2.0, "valid_max": 2.0},
+        ],
     )
 
     print("\nDone! Fixture NetCDF files written successfully.")

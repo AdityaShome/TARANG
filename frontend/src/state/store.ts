@@ -26,7 +26,9 @@
 
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
-import type { UIMode, RenderMode, ColormapName, ColormapConfig, SourceEntry } from '../api/types'
+import type { UIMode, RenderMode, ColormapName, ColormapConfig, SourceEntry, SourceMetadata } from '../api/types'
+
+type CFMetaMap = SourceMetadata['cf_metadata']   // per-variable CF metadata from /api/metadata
 import type { LanguageCode } from '../i18n/translations'
 
 const LANGUAGE_STORAGE_KEY = 'tarang_language'
@@ -71,6 +73,8 @@ interface TarangState {
   sources:         SourceEntry[]
   activeSourceId:  string
   activeVar:       string
+  availableVariables: string[]   // every variable the active source exposes — drives the var dropdown
+  cfMetadata:         CFMetaMap
 
   // Spatial / temporal
   activeDepthIdx: number                            // index into depthLevels[]
@@ -84,10 +88,8 @@ interface TarangState {
   isoThreshold: number
   colormap:     ColormapConfig
 
-  // Region search — label for display, and a one-shot camera fly-to target consumed by
-  // SceneManager (cleared back to null right after it acts on it). hasSearchedRegion gates
-  // whether SceneManager fetches/renders ANY data layer — there is no default sea; the
-  // researcher picks one by searching, per the actual requirement (not a fixed demo region).
+  // Region search: display label, one-shot camera fly-to (SceneManager clears it), and a
+  // gate — no data layer renders until a region has been searched.
   regionLabel:       string | null
   flyToTarget:       { lat: number; lon: number } | null
   hasSearchedRegion: boolean
@@ -103,6 +105,7 @@ interface TarangState {
   setLanguage:         (lang: LanguageCode)    => void
   setActiveSource:     (id: string)            => void
   setActiveVar:        (variable: string)      => void
+  setVariableMeta:     (vars: string[], cf: CFMetaMap) => void
   setActiveDepthIdx:   (idx: number)           => void   // always an index, not meters
   setActiveTimeIdx:    (idx: number)           => void
   setBbox:             (bbox: [number, number, number, number]) => void
@@ -138,10 +141,9 @@ export const useTarangStore = create<TarangState>()(
 
     sources:             [],
     activeSourceId:      'copernicus_temp',
-    // Left empty (not hardcoded to a guessed variable name) until App.tsx's bootstrap
-    // effect fetches real metadata for activeSourceId and calls setActiveVar — see the
-    // comment on setActiveSource below for why an empty activeVar matters.
-    activeVar:           '',
+    activeVar:           '',   // set by App.tsx once metadata for activeSourceId loads
+    availableVariables:  [],
+    cfMetadata:          {},
 
     activeDepthIdx:      0,
     activeTimeIdx:       0,
@@ -172,19 +174,25 @@ export const useTarangStore = create<TarangState>()(
       try { localStorage.setItem(LANGUAGE_STORAGE_KEY, lang) } catch { /* private mode — non-fatal */ }
       set({ language: lang })
     },
-    // activeVar is cleared here (not just left stale) so it never briefly names a variable
-    // that belongs to the PREVIOUS source. App.tsx's bootstrap effect re-fetches metadata for
-    // the new source and calls setActiveVar once it knows the right name. Consumers (SceneManager,
-    // Legend) treat an empty activeVar as "still loading" and skip firing requests / rendering.
-    setActiveSource:     (id)      => set({ activeSourceId: id, activeVar: '', activeDepthIdx: 0, activeTimeIdx: 0 }),
-    setActiveVar:        (v)       => set({ activeVar: v }),
+    // Clear activeVar + the var list so nothing briefly names a variable from the old source;
+    // App.tsx re-fetches metadata and calls setActiveVar with the right name.
+    setActiveSource:     (id)      => set({
+      activeSourceId: id, activeVar: '', activeDepthIdx: 0, activeTimeIdx: 0,
+      availableVariables: [], cfMetadata: {},
+    }),
+    // Also re-seed the colour range from the new variable's CF valid_min/valid_max.
+    setActiveVar:        (v)       => set(s => {
+      const cf = s.cfMetadata[v]
+      if (!cf || !Number.isFinite(cf.valid_min) || !Number.isFinite(cf.valid_max)) {
+        return { activeVar: v }
+      }
+      return { activeVar: v, colormap: { ...s.colormap, min: cf.valid_min, max: cf.valid_max } }
+    }),
+    setVariableMeta:     (vars, cf) => set({ availableVariables: vars, cfMetadata: cf }),
     setActiveDepthIdx:   (idx)     => set({ activeDepthIdx: idx }),
     setActiveTimeIdx:    (idx)     => set({ activeTimeIdx: idx }),
     setBbox:             (bbox)    => set({ bbox }),
-    // A region search changes WHERE every layer fetches data from (bbox — already reactive,
-    // every layer's update() effect depends on it) and asks the camera to fly there. It does
-    // NOT touch activeSourceId/activeVar — the same source/variable just gets re-queried for
-    // the new bbox (live-fetched from Copernicus if outside a local source's cached extent).
+    // Changes the bbox (every layer re-fetches) and flies the camera there; source/var unchanged.
     searchRegion:        (bbox, label) => {
       const [minLon, minLat, maxLon, maxLat] = bbox
       set({
@@ -199,7 +207,16 @@ export const useTarangStore = create<TarangState>()(
     clearFlyToTarget:    () => set({ flyToTarget: null }),
     setDepthLevels:      (levels)  => set({ depthLevels: levels }),
     setTimeSteps:        (steps)   => set({ timeSteps: steps }),
-    setRenderMode:       (mode)    => set({ renderMode: mode }),
+    // Render mode drives the slice/volume/isosurface trio (markers/vectors are independent).
+    setRenderMode:       (mode)    => set(s => ({
+      renderMode: mode,
+      layerVisibility: {
+        ...s.layerVisibility,
+        slice:      mode === 'slice',
+        volume:     mode === 'volume',
+        isosurface: mode === 'isosurface',
+      },
+    })),
     setIsoThreshold:     (v)       => set({ isoThreshold: v }),
     setColormap:         (cfg)     => set(s => ({ colormap: { ...s.colormap, ...cfg } })),
     setColormapName:     (name)    => set(s => ({ colormap: { ...s.colormap, name } })),
