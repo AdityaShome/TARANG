@@ -49,6 +49,10 @@ def fetch_argo_region(region_name: str, config: dict) -> None:
         logger.info(f"{region_name}: cache already exists at {out_path} — skipping")
         return
 
+    if os.getenv("OFFLINE_MODE", "false").strip().lower() in ("1", "true", "yes", "on"):
+        logger.warning(f"{region_name}: OFFLINE_MODE and no cache at {out_path} — cannot fetch.")
+        return
+
     min_lon, min_lat, max_lon, max_lat = config["bbox"]
     start_time = config['date_start'] + "T00:00:00Z"
     end_time = config['date_end'] + "T00:00:00Z"
@@ -97,10 +101,9 @@ def ingest_to_postgis(nc_path: str, db_url: str) -> None:
     conn = psycopg2.connect(db_url)
     cur  = conn.cursor()
 
-    # Ensure schema. UNIQUE constraint is required for ON CONFLICT DO NOTHING below to actually
-    # do anything — without it, Postgres never has a conflict to detect, so re-running this
-    # ingest (e.g. once per region, or a second time by hand) silently duplicates every row.
+    # The UNIQUE index is what makes the ON CONFLICT DO NOTHING below idempotent.
     cur.execute("""
+        CREATE EXTENSION IF NOT EXISTS postgis;
         CREATE TABLE IF NOT EXISTS instruments (
             id SERIAL PRIMARY KEY,
             platform_id TEXT, type TEXT, lat DOUBLE PRECISION, lon DOUBLE PRECISION,
@@ -112,13 +115,7 @@ def ingest_to_postgis(nc_path: str, db_url: str) -> None:
             ON instruments (platform_id, cycle_number);
     """)
 
-    # Argo NetCDF/ERDDAP files come in several incompatible flat-table shapes depending on how
-    # they were fetched — seen in practice from this exact ingest pipeline: ERDDAP's tabledap
-    # ("row" dim, lowercase platform_number/latitude/...) and argopy's point export ("N_POINTS"
-    # dim, uppercase PLATFORM_NUMBER/LATITUDE/...). Neither is the classic multi-profile format
-    # (N_PROF dim, PLATFORM_NUMBER/JULD) this function originally assumed — which is why every
-    # prior run inserted 0 of 0 profiles regardless of the (large, real) data actually present.
-    # Resolve whichever column names this particular file actually has instead of guessing one.
+    # ERDDAP tabledap and argopy exports use different column-name casing; resolve either.
     def _col(*candidates: str) -> str:
         for name in candidates:
             if name in ds.variables:
@@ -131,8 +128,7 @@ def ingest_to_postgis(nc_path: str, db_url: str) -> None:
     col_lon      = _col("longitude", "LONGITUDE")
     col_time     = _col("time", "TIME", "JULD")
 
-    # One float position marker per (platform, cycle) — group the many depth-level measurement
-    # rows down to their single shared lat/lon/time.
+    # One marker per (platform, cycle) — collapse the depth-level rows to one position.
     df = ds[[col_platform, col_cycle, col_lat, col_lon, col_time]].to_dataframe()
     df = df.rename(columns={
         col_platform: "platform_number", col_cycle: "cycle_number",

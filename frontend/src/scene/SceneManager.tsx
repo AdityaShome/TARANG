@@ -384,30 +384,25 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
   // ── Update data layers on store changes ────────────────────────────────────
   useEffect(() => {
     if (!layerManagerRef.current) return
-    // store.setActiveSource() clears activeVar synchronously so it can never name a variable
-    // belonging to the PREVIOUS source. App.tsx's bootstrap effect re-fetches metadata and
-    // calls setActiveVar once it knows the right name for the new source — until then, skip
-    // firing layer requests (otherwise we ask the new source for a variable it doesn't have
-    // and the backend 500s).
-    // No default sea — nothing renders until the researcher actually searches a region.
+    // Nothing renders until a region is searched and metadata has resolved activeVar.
     if (!hasSearchedRegion) return
     if (!activeVar || isLoading) return
 
-    // Collected so a search/region change can show real "still fetching" feedback (e.g. a live,
-    // uncached Copernicus region search can take tens of seconds) instead of the UI just
-    // guessing when to stop showing a spinner. Deliberately NOT read/set through the `isLoading`
-    // flag this effect also guards on above — toggling that here would make the effect re-fire
-    // itself (isLoading is one of its own deps) and re-request the same data twice.
     const pending: Promise<void>[] = []
+
+    // Render mode drives the slice/volume/isosurface trio: show the active one, hide the rest.
+    for (const [layerId, mode] of [['slice', 'slice'], ['volume', 'volume'], ['isosurface', 'isosurface']] as const) {
+      const active = !!layerVisibility[layerId] && renderMode === mode
+      layerManagerRef.current.getLayer(layerId)?.setVisible?.(active)
+    }
 
     if (layerVisibility['slice'] && renderMode === 'slice') {
       const layer = layerManagerRef.current.getLayer('slice')
       if (layer) {
-        const depthLevels = useTarangStore.getState().depthLevels
-        const activeDepthM = depthLevels[activeDepthIdx] ?? 0
+        // depthIdx is a depth-level INDEX; DepthSliceLayer resolves it via depthLevels[].
         pending.push(layer.update({
           source: activeSourceId, variable: activeVar,
-          timeIdx: activeTimeIdx, depthIdx: activeDepthM,
+          timeIdx: activeTimeIdx, depthIdx: activeDepthIdx,
           bbox, clim: [colormap.min, colormap.max],
           colormap: colormap.name, opacity: colormap.opacity,
         }))

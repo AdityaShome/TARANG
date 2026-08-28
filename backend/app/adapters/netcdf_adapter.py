@@ -31,6 +31,11 @@ from backend.app.adapters.base import DataSourceAdapter, CFMetadata, SliceResult
 logger = logging.getLogger("tarang.adapters.netcdf")
 
 
+def _offline_mode() -> bool:
+    """True → never make an outbound internet call."""
+    return os.getenv("OFFLINE_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
 class NetCDFAdapter(DataSourceAdapter):
     """
     Adapter for CF-compliant NetCDF datasets accessed either:
@@ -94,26 +99,13 @@ class NetCDFAdapter(DataSourceAdapter):
         )
 
     def _open_live_copernicus(self, bbox: tuple[float, float, float, float]) -> xr.Dataset:
-        """
-        Bbox-scoped fetch straight from Copernicus Marine — this is what makes an arbitrary
-        sea search actually work, instead of only ever returning whatever region happened to
-        be pre-downloaded into local_cache.
-
-        Deliberately uses subset() (small server-side-prepared download to a cache file), NOT
-        open_dataset() (lazy zarr) + .values(): measured directly against this exact dataset,
-        subset() for a 20x20 degree region completed in ~22s, while open_dataset() followed by
-        forcing computation on even one time/depth slice hung for 5+ minutes — this backend's
-        ARCO/zarr chunk layout makes byte-range reads pathologically slow for small selections,
-        while its own subset/download path is server-optimized and fast. subset() is also the
-        exact method backend/app/ingest/download_copernicus.py already uses successfully.
-        """
+        """Bbox-scoped fetch from Copernicus Marine via subset() (far faster than lazy zarr here)."""
         import copernicusmarine
         from datetime import datetime, timedelta
 
         min_lon, min_lat, max_lon, max_lat = bbox
 
-        # Cache by rounded bbox + variable, so re-querying the same searched region (different
-        # depth/time-step/render-mode) within a session reuses the file instead of re-fetching.
+        # Cache by rounded bbox + variable so re-querying the same region reuses the file.
         cache_key = f"live_{self.variable}_{min_lon:.1f}_{min_lat:.1f}_{max_lon:.1f}_{max_lat:.1f}"
         cache_dir = Path("data/netcdf/live_cache")
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -128,12 +120,7 @@ class NetCDFAdapter(DataSourceAdapter):
             f"dataset '{self.live_dataset_id}' -> {cache_file}"
         )
         end = datetime.utcnow()
-        # Kept tight on purpose — measured directly: the full depth column (0-6000m, 50 levels)
-        # over an 8-day window for a 20x20 degree region downloaded ~100MB and took ~3.5 minutes.
-        # That's fine for a background pre-cache job, not for someone waiting on a search result.
-        # 0-1000m covers the mixed layer/thermocline (where most near-surface phenomena — and
-        # most of a demo's interesting variation — actually live) in a fraction of the levels;
-        # 3 days is enough for one representative time step without multiplying the download.
+        # Kept small (0-1000m, 3 days) so an interactive search returns in seconds.
         start = end - timedelta(days=3)
         copernicusmarine.subset(
             dataset_id=self.live_dataset_id,
@@ -159,6 +146,16 @@ class NetCDFAdapter(DataSourceAdapter):
         so we open fresh on every request."""
         if self._local_cache_covers(bbox):
             return self._open_local_or_configured_url(use_local=True)
+
+        # OFFLINE_MODE: no live fetch — serve the local cache even if the bbox spills
+        # outside its extent, else fall to source_url (the in-cluster THREDDS).
+        if _offline_mode():
+            if self.local_cache and Path(self.local_cache).exists():
+                logger.info(f"OFFLINE_MODE: serving cached '{self.local_cache}' for bbox {bbox}")
+                return self._open_local_or_configured_url(use_local=True)
+            logger.warning(f"OFFLINE_MODE: no local cache; using {self.source_url}")
+            return self._open_local_or_configured_url(use_local=False)
+
         if self.live_dataset_id and bbox is not None:
             try:
                 return self._open_live_copernicus(bbox)

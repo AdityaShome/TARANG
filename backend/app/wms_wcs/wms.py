@@ -35,11 +35,11 @@ from PIL import Image
 logger = logging.getLogger("tarang.wms")
 router = APIRouter(tags=["OGC WMS"])
 
-# WMS 1.3.0 capabilities XML template
+# WMS 1.3.0 capabilities: one root <Layer> with the data layers as children.
 _CAPABILITIES_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE WMT_MS_Capabilities SYSTEM "http://schemas.opengis.net/wms/1.3.0/capabilities_1_3_0.dtd">
 <WMS_Capabilities version="1.3.0" xmlns="http://www.opengis.net/wms"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.opengis.net/wms http://schemas.opengis.net/wms/1.3.0/capabilities_1_3_0.xsd">
 
@@ -47,12 +47,11 @@ _CAPABILITIES_XML = """\
     <Name>WMS</Name>
     <Title>TARANG Ocean Visualization WMS — MoES/INCOIS SIH 2026 PS 26067</Title>
     <Abstract>
-      Web Map Service for real-time Indian Ocean / Bay of Bengal ocean data.
-      Variables: sea water temperature, salinity, current velocity components.
-      Data source: HYCOM GLBy0.08 experiment 93.0 (1/12° global, 40 depth levels).
+      Hand-rolled OGC WMS 1.3.0 (§4 Option B fallback) serving coloured tiles from
+      TARANG's cached CF-1.8 NetCDF for the Indian Ocean / Bay of Bengal.
+      CF standard_name and units for each layer are given in its Abstract.
     </Abstract>
-    <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink"
-      xlink:type="simple" xlink:href="{base_url}/wms"/>
+    <OnlineResource xlink:type="simple" xlink:href="{base_url}/wms"/>
     <ContactInformation>
       <ContactPersonPrimary>
         <ContactOrganization>TARANG Team — Smart India Hackathon 2026</ContactOrganization>
@@ -65,33 +64,23 @@ _CAPABILITIES_XML = """\
   <Capability>
     <Request>
       <GetCapabilities>
-        <Format>application/vnd.ogc.wms_xml</Format>
+        <Format>text/xml</Format>
         <DCPType><HTTP><Get>
-          <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink"
-            xlink:type="simple" xlink:href="{base_url}/wms"/>
+          <OnlineResource xlink:type="simple" xlink:href="{base_url}/wms"/>
         </Get></HTTP></DCPType>
       </GetCapabilities>
       <GetMap>
         <Format>image/png</Format>
         <DCPType><HTTP><Get>
-          <OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink"
-            xlink:type="simple" xlink:href="{base_url}/wms"/>
+          <OnlineResource xlink:type="simple" xlink:href="{base_url}/wms"/>
         </Get></HTTP></DCPType>
       </GetMap>
     </Request>
     <Exception>
       <Format>XML</Format>
     </Exception>
-    {layers_xml}
-  </Capability>
-</WMS_Capabilities>
-"""
-
-_LAYER_XML_TEMPLATE = """\
-    <Layer queryable="0" opaque="0" cascaded="0">
-      <Name>{layer_id}</Name>
-      <Title>{label}</Title>
-      <Abstract>{description}</Abstract>
+    <Layer>
+      <Title>TARANG Ocean Data</Title>
       <CRS>CRS:84</CRS>
       <CRS>EPSG:4326</CRS>
       <EX_GeographicBoundingBox>
@@ -100,8 +89,32 @@ _LAYER_XML_TEMPLATE = """\
         <southBoundLatitude>-90</southBoundLatitude>
         <northBoundLatitude>90</northBoundLatitude>
       </EX_GeographicBoundingBox>
-      <BoundingBox CRS="CRS:84" minx="-180" miny="-90" maxx="180" maxy="90"/>
+{layers_xml}
     </Layer>
+  </Capability>
+</WMS_Capabilities>
+"""
+
+_LAYER_XML_TEMPLATE = """\
+      <Layer queryable="0" opaque="0" cascaded="0">
+        <Name>{layer_id}</Name>
+        <Title>{label}</Title>
+        <Abstract>{description} [CF standard_name: {standard_name}; units: {units}]</Abstract>
+        <CRS>CRS:84</CRS>
+        <CRS>EPSG:4326</CRS>
+        <EX_GeographicBoundingBox>
+          <westBoundLongitude>{min_lon}</westBoundLongitude>
+          <eastBoundLongitude>{max_lon}</eastBoundLongitude>
+          <southBoundLatitude>{min_lat}</southBoundLatitude>
+          <northBoundLatitude>{max_lat}</northBoundLatitude>
+        </EX_GeographicBoundingBox>
+        <BoundingBox CRS="CRS:84" minx="{min_lon}" miny="{min_lat}" maxx="{max_lon}" maxy="{max_lat}"/>
+        <Dimension name="elevation" units="m" unitSymbol="m" default="{elev_default}"{elev_multi}>{elev_values}</Dimension>
+        <Style>
+          <Name>{colormap}</Name>
+          <Title>{colormap} (matplotlib)</Title>
+        </Style>
+      </Layer>
 """
 
 
@@ -114,10 +127,6 @@ def _apply_colormap(data: np.ndarray, vmin: float, vmax: float, cmap_name: str =
     """
     try:
         import matplotlib
-        # matplotlib.cm.get_cmap() was deprecated in 3.7 and removed in 3.9+; matplotlib itself
-        # wasn't even installed in this image until now (see requirements.txt), so this whole
-        # path was silently falling back to grayscale for every WMS tile regardless of which
-        # exception would have hit here. matplotlib.colormaps[name] is the current stable API.
         cmap = matplotlib.colormaps[cmap_name]
     except Exception as e:
         logger.warning(f"Colormap '{cmap_name}' unavailable ({e}) — falling back to grayscale")
@@ -192,21 +201,36 @@ async def wms(
         raise HTTPException(400, f"Unsupported WMS REQUEST: '{REQUEST}'. Supported: GetCapabilities, GetMap")
 
 
+def _xml_escape(s: str) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
 async def _get_capabilities(request: Request) -> Response:
-    """Build and return the WMS 1.3.0 capabilities XML."""
+    """WMS 1.3.0 capabilities XML, built from the registry manifests (no dataset opens)."""
     registry = request.app.state.registry
     base_url = str(request.base_url).rstrip("/")
 
     layers_xml = ""
     for manifest in registry.all_manifests():
+        bbox = manifest.get("default_bbox") or manifest.get("local_cache_bbox") or [-180, -90, 180, 90]
+        depth_levels = manifest.get("depth_levels") or []
+        elev_values = ",".join(str(d) for d in depth_levels) if depth_levels else "0"
         layers_xml += _LAYER_XML_TEMPLATE.format(
-            layer_id=manifest["id"],
-            label=manifest.get("label", manifest["id"]),
-            description=manifest.get("description", ""),
+            layer_id=_xml_escape(manifest["id"]),
+            label=_xml_escape(manifest.get("label", manifest["id"])),
+            description=_xml_escape(manifest.get("description", "")),
+            standard_name=_xml_escape(manifest.get("standard_name", "unknown")),
+            units=_xml_escape(manifest.get("units", "unknown")),
+            min_lon=bbox[0], min_lat=bbox[1], max_lon=bbox[2], max_lat=bbox[3],
+            elev_default=(depth_levels[0] if depth_levels else 0),
+            elev_multi=' multipleValues="true"' if len(depth_levels) > 1 else "",
+            elev_values=elev_values,
+            colormap=_xml_escape(manifest.get("colormap", "viridis")),
         )
 
     xml = _CAPABILITIES_XML.format(base_url=base_url, layers_xml=layers_xml)
-    return Response(content=xml, media_type="application/vnd.ogc.wms_xml")
+    return Response(content=xml, media_type="text/xml")
 
 
 async def _get_map(
@@ -262,11 +286,6 @@ async def _get_map(
             depth_m = depth_levels[0]
 
         variable = meta["available_variables"][0]
-
-        # get_slice(variable, depth_m, time_idx, bbox) — NOT (time_idx=, depth_idx=): that
-        # signature never existed on any adapter, so this call previously always raised
-        # TypeError, was swallowed by the except below, and GetMap silently returned a blank
-        # transparent tile for every request regardless of layer/bbox — never actually working.
         slice_result = adapter.get_slice(variable, depth_m, time_idx, (min_lon, min_lat, max_lon, max_lat))
         data_2d = slice_result.data
 

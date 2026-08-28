@@ -68,7 +68,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - COPERNICUS_USERNAME=${COPERNICUS_USERNAME:-}
       - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
-      - OPTION_B_MODE=${OPTION_B_MODE:-true}
+      - OFFLINE_MODE=${OFFLINE_MODE:-false}   # true → no outbound calls; serve data/ caches only
+      - OPTION_B_MODE=${OPTION_B_MODE:-false} # true → also mount the hand-rolled /wms + /wcs
     depends_on:
       postgis:
         condition: service_healthy

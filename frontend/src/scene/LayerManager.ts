@@ -15,6 +15,7 @@ export interface Layer {
   build(scene: THREE.Scene): void
   update(params: Partial<LayerParams>): Promise<void>
   dispose(): void
+  setVisible?(visible: boolean): void   // show/hide without tearing down data (render-mode switch)
 }
 
 export class LayerManager {

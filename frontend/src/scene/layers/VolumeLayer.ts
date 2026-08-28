@@ -7,15 +7,14 @@ import vertShader from '../shaders/volumeVert.glsl?raw'
 import fragShader from '../shaders/volumeFrag_v2.glsl?raw'
 import type { ColormapName } from '../../api/types'
 
-// Must match the u_colormap branches in colormapFrag.glsl / volumeFrag_v2.glsl exactly.
+// Must match the u_colormap branches in the shaders.
 const COLORMAP_INDEX: Record<ColormapName, number> = {
   viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
 }
 
-// Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ exactly — this layer places its
-// box mesh in the SAME spherical globe scene those build, not a standalone coordinate space.
+// Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ.
 const EARTH_RADIUS = 200
-const DEG_TO_WORLD = (Math.PI * EARTH_RADIUS) / 180 // arc length (world units) per degree of lat/lon
+const DEG_TO_WORLD = (Math.PI * EARTH_RADIUS) / 180 // world units per degree of lat/lon
 
 function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180)
@@ -27,12 +26,22 @@ function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 
   )
 }
 
+// ?voldebug=1..4 → raymarch diagnostic overlay (see volumeFrag_v2.glsl).
+function readDebugFlag(): number {
+  try {
+    const n = parseInt(new URLSearchParams(window.location.search).get('voldebug') || '0', 10)
+    return Number.isFinite(n) ? n : 0
+  } catch { return 0 }
+}
+
 export class VolumeLayer implements Layer {
   private mesh: THREE.Mesh | null = null
   private texture: THREE.Data3DTexture | null = null
   private material: THREE.ShaderMaterial | null = null
   private scene: THREE.Scene | null = null
   private abortController: AbortController | null = null
+  private wantVisible = true
+  private hasData = false
 
   build(scene: THREE.Scene) {
     this.scene = scene
@@ -43,31 +52,29 @@ export class VolumeLayer implements Layer {
       fragmentShader: fragShader,
       uniforms: {
         u_data: { value: null },
+        u_modelInv: { value: new THREE.Matrix4() },   // world → local box space
+        u_regionNormal: { value: new THREE.Vector3(0, 0, 1) },
         u_clim: { value: new THREE.Vector2(0, 1) },
         u_opacity: { value: 1.0 },
         u_missing: { value: 99999.0 },
-        u_renderstyle: { value: 0 }, // 0 = MIP
+        u_renderstyle: { value: 0 }, // MIP (iso is a separate layer)
         u_iso_threshold: { value: 20.0 },
         u_colormap: { value: 0 },
         u_log_scale: { value: 0 },
+        u_debug: { value: readDebugFlag() },
       },
       transparent: true,
       side: THREE.BackSide,
+      depthWrite: false,
+      // Box sits inside the opaque globe; depth testing would hide all but the surface sliver.
+      depthTest: false,
       glslVersion: THREE.GLSL3
     })
 
     this.mesh = new THREE.Mesh(geometry, this.material)
-    // Placed far from the origin (on the EARTH_RADIUS=200 globe's surface) in update() below —
-    // disable frustum culling so Three.js doesn't cull it based on the tiny 1x1x1 pre-transform
-    // bounding sphere (see the identical comment in DepthSliceLayer.ts for the full mechanism).
-    this.mesh.frustumCulled = false
-    // Hidden until update() below positions it with real bounds and data — see the identical
-    // comment in DepthSliceLayer.ts. Before that, it sits at the origin at unit scale, which
-    // happens to be buried inside the opaque Earth sphere either way, but this also fixes a
-    // separate real bug: the "Volume" layer checkbox only gates whether update() gets called,
-    // not this mesh's own visibility, so without this it could still render once a region IS
-    // searched even with that checkbox off.
-    this.mesh.visible = false
+    this.mesh.renderOrder = 3          // draw after the globe + markers (depthTest is off)
+    this.mesh.frustumCulled = false    // shader displaces verts onto the globe; bounds are wrong
+    this.mesh.visible = false          // until update() has real data
     scene.add(this.mesh)
   }
 
@@ -102,9 +109,7 @@ export class VolumeLayer implements Layer {
           this.texture = new THREE.Data3DTexture(data, lonSize, latSize, depthSize)
           this.texture.format = THREE.RedFormat
           this.texture.type = THREE.FloatType
-          // NearestFilter, not Linear — see DepthSliceLayer.ts for why: linear filtering on a
-          // FloatType texture needs OES_texture_float_linear, which isn't guaranteed on every
-          // GPU. Missing it doesn't throw, it just silently breaks the render (blown-out/white).
+          // NearestFilter: linear on a float texture needs OES_texture_float_linear.
           this.texture.minFilter = THREE.NearestFilter
           this.texture.magFilter = THREE.NearestFilter
           this.texture.unpackAlignment = 1
@@ -114,12 +119,13 @@ export class VolumeLayer implements Layer {
           this.texture.image.data = data
           this.texture.needsUpdate = true
         }
-        this.mesh.visible = true
+        this.hasData = true
+        this.mesh.visible = this.wantVisible
 
         const state = useTarangStore.getState()
         const userClim = [state.colormap.min, state.colormap.max]
         this.material.uniforms.u_clim.value.set(userClim[0], userClim[1])
-        this.material.uniforms.u_missing.value = header.missing_value
+        this.material.uniforms.u_missing.value = header.missing_value ?? -9999.0
         this.material.uniforms.u_colormap.value = COLORMAP_INDEX[state.colormap.name] ?? 0
         this.material.uniforms.u_log_scale.value = state.colormap.logScale ? 1 : 0
 
@@ -128,33 +134,33 @@ export class VolumeLayer implements Layer {
 
         const maxDepthM = Math.max(...header.depth_levels)
         const vExag = state.colormap.verticalExaggeration || 50
-        // Same depth-to-world-units calibration the original code used (111000 m/deg of
-        // latitude as a rough deg-to-metres constant); depthScale is in the same "one world
-        // unit per degree-equivalent" space as DEG_TO_WORLD converts lon/lat degrees into.
-        const depthScale = (maxDepthM / 111000) * vExag
+        const depthScale = (maxDepthM / 111000) * vExag  // ~m-per-degree → world units
 
-        // Box is built in DEGREES of lon/lat width/height and a depth "thickness" in that same
-        // unit — but the scene's globe is EARTH_RADIUS=200 world units in *radius*, not degrees.
-        // Scale each axis into real world units before sizing the box, or it renders as a speck.
+        // Scale degree-sized extents into world units; place tangent to the globe, extending inward.
         this.mesh.scale.set(widthDeg * DEG_TO_WORLD, heightDeg * DEG_TO_WORLD, depthScale * DEG_TO_WORLD)
-
-        // Place the box tangent to the globe surface at the region's centre lat/lon, with its
-        // outward face (surface, depth=0) sitting ON the sphere and the rest extending inward
-        // (toward the sphere's centre) to represent depth — instead of the old flat rotation.x
-        // that left it sitting at the world origin, i.e. inside the opaque Earth sphere.
         const centerLat = (header.bounds.lat[0] + header.bounds.lat[1]) / 2
         const centerLon = (header.bounds.lon[0] + header.bounds.lon[1]) / 2
-        const outward = latLonToXYZ(centerLat, centerLon, 1) // unit outward normal at region centre
+        const outward = latLonToXYZ(centerLat, centerLon, 1)
         const surfacePoint = outward.clone().multiplyScalar(EARTH_RADIUS)
 
+        this.material.uniforms.u_regionNormal.value.copy(outward)  // limb fade (shader)
         this.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), outward)
         this.mesh.position.copy(surfacePoint)
           .addScaledVector(outward, -(depthScale * DEG_TO_WORLD) / 2)
+
+        // CPU inverse-world-matrix for the raymarch (GLSL inverse() is imprecise here).
+        this.mesh.updateMatrixWorld(true)
+        this.material.uniforms.u_modelInv.value.copy(this.mesh.matrixWorld).invert()
 
       } catch (err: any) {
         if (err.name !== 'AbortError') console.error(err)
       }
     }
+  }
+
+  setVisible(visible: boolean) {
+    this.wantVisible = visible
+    if (this.mesh) this.mesh.visible = visible && this.hasData
   }
 
   dispose() {

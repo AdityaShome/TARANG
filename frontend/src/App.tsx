@@ -24,7 +24,7 @@ export default function App() {
   const setDepthLevels  = useTarangStore(s => s.setDepthLevels)
   const setTimeSteps    = useTarangStore(s => s.setTimeSteps)
   const setActiveVar    = useTarangStore(s => s.setActiveVar)
-  const setColormap     = useTarangStore(s => s.setColormap)
+  const setVariableMeta = useTarangStore(s => s.setVariableMeta)
   const setLoading      = useTarangStore(s => s.setLoading)
   const setError        = useTarangStore(s => s.setError)
 
@@ -47,12 +47,9 @@ export default function App() {
           : []
         )
 
-        // Set colormap bounds from CF metadata (NEVER hand-typed — §20 Rule 2)
-        const varMeta = meta.cf_metadata[meta.available_variables[0]]
-        if (varMeta) {
-          setActiveVar(meta.available_variables[0])
-          setColormap({ min: varMeta.valid_min, max: varMeta.valid_max })
-        }
+        // Feed the variable dropdown; setActiveVar seeds the colour range from CF metadata.
+        setVariableMeta(meta.available_variables, meta.cf_metadata)
+        if (meta.available_variables[0]) setActiveVar(meta.available_variables[0])
       } catch (e: unknown) {
         if ((e as Error).name !== 'AbortError') {
           setError(`Failed to connect to backend: ${(e as Error).message}`)

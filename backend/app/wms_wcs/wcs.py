@@ -283,25 +283,25 @@ async def _get_coverage(
         t0, t1 = time_range  if time_range  else (0, n_time  - 1)
         d0, d1 = depth_range if depth_range else (0, n_depth - 1)
 
-        # SUBSET[latitude]/SUBSET[longitude] were parsed but never actually used — every
-        # GetCoverage request silently ignored the geographic subset entirely. get_slice()
-        # requires a bbox unconditionally, so without one this always threw and GetCoverage
-        # 500'd for every request regardless of parameters. Fall back to the source's own
-        # configured default region when the caller doesn't specify one.
+        # get_slice needs a bbox; fall back to the source's default region if not requested.
         default_bbox = manifest.get("default_bbox") or manifest.get("local_cache_bbox") or [80, 5, 100, 25]
         min_lon, max_lon = lon_range if lon_range else (default_bbox[0], default_bbox[2])
         min_lat, max_lat = lat_range if lat_range else (default_bbox[1], default_bbox[3])
         bbox = (min_lon, min_lat, max_lon, max_lat)
 
-        # Collect requested slices — get_slice(variable, depth_m, time_idx, bbox), not the
-        # (time_idx=, depth_idx=) signature this used to call, which doesn't exist on any
-        # adapter and always raised TypeError.
         slices = []
+        coord_lat = coord_lon = None
+        out_depths = []
         for ti in range(t0, t1 + 1):
             for di in range(d0, d1 + 1):
                 depth_m = depth_levels[di] if di < len(depth_levels) else depth_levels[-1]
                 result = adapter.get_slice(variable, depth_m, ti, bbox)
                 slices.append(result.data)
+                if coord_lat is None:
+                    coord_lat = np.asarray(result.lat, dtype="f4")
+                    coord_lon = np.asarray(result.lon, dtype="f4")
+                if ti == t0:
+                    out_depths.append(float(result.depth_m))
 
         if not slices:
             raise ValueError("No data slices returned")
@@ -315,26 +315,43 @@ async def _get_coverage(
         logger.warning(f"WCS GetCoverage data error for '{coverage_id}': {e}")
         raise HTTPException(500, f"Failed to extract coverage data: {e}")
 
-    # Write to in-memory NetCDF4
+    # Write to a temp NetCDF4 file (netCDF4 needs a real path).
     try:
         import netCDF4 as nc4  # type: ignore
         buf = io.BytesIO()
 
-        # netCDF4 requires a real file path — use a temp file
         import tempfile, os
         with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
             tmp_path = tmp.name
 
         ds = nc4.Dataset(tmp_path, "w", format="NETCDF4")
         ds.Conventions = "CF-1.8"
-        ds.title = f"TARANG WCS GetCoverage — {manifest.get('label', coverage_id)}"
-        ds.institution = "MoES/INCOIS — Smart India Hackathon 2026 PS 26067"
-        ds.source = manifest.get("source", "")
+        ds.setncattr_string("title", f"TARANG WCS GetCoverage — {manifest.get('label', coverage_id)}")
+        ds.setncattr_string("institution", "MoES/INCOIS — Smart India Hackathon 2026 PS 26067")
+        ds.setncattr_string("source", manifest.get("source", ""))
 
         ds.createDimension("time",      n_t)
         ds.createDimension("depth",     n_d)
         ds.createDimension("latitude",  arr.shape[2])
         ds.createDimension("longitude", arr.shape[3])
+
+        # CF coordinate variables so the coverage is georeferenceable.
+        tv = ds.createVariable("time", "i4", ("time",))
+        tv.units = "days since 2000-01-01 00:00:00"
+        tv.standard_name = "time"
+        tv[:] = np.arange(t0, t1 + 1, dtype="i4")
+
+        dv = ds.createVariable("depth", "f4", ("depth",))
+        dv.units = "m"; dv.positive = "down"; dv.standard_name = "depth"
+        dv[:] = np.asarray(out_depths, dtype="f4") if out_depths else np.zeros(n_d, dtype="f4")
+
+        if coord_lat is not None:
+            latv = ds.createVariable("latitude", "f4", ("latitude",))
+            latv.units = "degrees_north"; latv.standard_name = "latitude"
+            latv[:] = coord_lat
+            lonv = ds.createVariable("longitude", "f4", ("longitude",))
+            lonv.units = "degrees_east"; lonv.standard_name = "longitude"
+            lonv[:] = coord_lon
 
         var_name = manifest.get("variable", coverage_id)
         v = ds.createVariable(var_name, "f4", ("time", "depth", "latitude", "longitude"),

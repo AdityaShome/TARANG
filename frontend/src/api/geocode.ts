@@ -1,60 +1,66 @@
-/**
- * Region search — geocodes a free-text place/sea name (e.g. "Arabian Sea",
- * "Andaman Sea", "Lakshadweep") to a bounding box, via OpenStreetMap's Nominatim.
- *
- * Nominatim is public, free, and needs no API key — but its usage policy (see
- * https://operations.osmfoundation.org/policies/nominatim/) asks for a descriptive
- * User-Agent/Referer and caps usage at ~1 request/second, which a manual search box
- * comfortably respects. Do not wire this to anything that fires automatically/rapidly.
- */
+// Place/sea name → bounding box. Offline-first: the built-in REGION_CATALOG is
+// checked before any Nominatim call, so the demo path never touches the network.
+
+import { REGION_CATALOG, searchLocalRegions } from './regions'
 
 export interface GeocodeResult {
   label: string
   bbox: [number, number, number, number]  // [minLon, minLat, maxLon, maxLat]
   lat: number
   lon: number
+  offline?: boolean   // true → from the local catalogue
 }
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search'
 
-export async function geocodeRegion(query: string, signal?: AbortSignal): Promise<GeocodeResult[]> {
-  const url = `${NOMINATIM_URL}?format=jsonv2&limit=5&q=${encodeURIComponent(query)}`
-  const res = await fetch(url, {
-    signal,
-    headers: { 'Accept': 'application/json' },
-  })
-  if (!res.ok) throw new Error(`Geocoding failed: ${res.status}`)
-  const json = await res.json()
-
-  return (json as any[]).map(r => {
-    // Nominatim's boundingbox is [south, north, west, east] as STRINGS.
-    const [south, north, west, east] = (r.boundingbox as string[]).map(Number)
-    let bbox: [number, number, number, number] = [west, south, east, north]
-
-    // Some results (a single point-like place) come back with a near-zero-area box; others
-    // (an ocean/sea the size of "Indian Ocean") come back enormous. Both get clamped to a
-    // sane span around the result's centre — too small and there's no region to fetch data
-    // for; too large and a first-time live Copernicus fetch (uncached region) gets slow fast,
-    // since payload size scales with area. 20 degrees still comfortably covers real seas
-    // (Arabian Sea, Andaman Sea, ...) without ballooning the fetch.
-    const MIN_SPAN = 2   // degrees
-    const MAX_SPAN = 20  // degrees
-    const [minLon, minLat, maxLon, maxLat] = bbox
-    const spanLon = maxLon - minLon
-    const spanLat = maxLat - minLat
-    if (spanLon < MIN_SPAN || spanLat < MIN_SPAN || spanLon > MAX_SPAN || spanLat > MAX_SPAN) {
-      const cLon = (minLon + maxLon) / 2
-      const cLat = (minLat + maxLat) / 2
-      const halfLon = Math.min(Math.max(spanLon, MIN_SPAN), MAX_SPAN) / 2
-      const halfLat = Math.min(Math.max(spanLat, MIN_SPAN), MAX_SPAN) / 2
-      bbox = [cLon - halfLon, cLat - halfLat, cLon + halfLon, cLat + halfLat]
-    }
-
-    return {
-      label: r.display_name as string,
-      bbox,
-      lat: parseFloat(r.lat),
-      lon: parseFloat(r.lon),
-    }
-  })
+function toResult(bbox: [number, number, number, number], label: string, offline: boolean): GeocodeResult {
+  const [minLon, minLat, maxLon, maxLat] = bbox
+  return { label, bbox, lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2, offline }
 }
+
+export async function geocodeRegion(query: string, signal?: AbortSignal): Promise<GeocodeResult[]> {
+  const local = searchLocalRegions(query)
+  if (local.length > 0) return local.map(r => toResult(r.bbox, r.name, true))
+
+  // Online fallback for arbitrary place names.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return []
+
+  try {
+    const url = `${NOMINATIM_URL}?format=jsonv2&limit=5&q=${encodeURIComponent(query)}`
+    const res = await fetch(url, { signal, headers: { 'Accept': 'application/json' } })
+    if (!res.ok) return []
+    const json = await res.json()
+
+    return (json as any[]).map(r => {
+      // Nominatim's boundingbox is [south, north, west, east] as STRINGS.
+      const [south, north, west, east] = (r.boundingbox as string[]).map(Number)
+      let bbox: [number, number, number, number] = [west, south, east, north]
+
+      // Clamp a near-zero-area or ocean-sized box to a sane span around its centre.
+      const MIN_SPAN = 2, MAX_SPAN = 20  // degrees
+      const [minLon, minLat, maxLon, maxLat] = bbox
+      const spanLon = maxLon - minLon
+      const spanLat = maxLat - minLat
+      if (spanLon < MIN_SPAN || spanLat < MIN_SPAN || spanLon > MAX_SPAN || spanLat > MAX_SPAN) {
+        const cLon = (minLon + maxLon) / 2
+        const cLat = (minLat + maxLat) / 2
+        const halfLon = Math.min(Math.max(spanLon, MIN_SPAN), MAX_SPAN) / 2
+        const halfLat = Math.min(Math.max(spanLat, MIN_SPAN), MAX_SPAN) / 2
+        bbox = [cLon - halfLon, cLat - halfLat, cLon + halfLon, cLat + halfLat]
+      }
+
+      return {
+        label: r.display_name as string,
+        bbox,
+        lat: parseFloat(r.lat),
+        lon: parseFloat(r.lon),
+        offline: false,
+      }
+    })
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') throw e
+    return []  // network error → "no match", never crash the search box
+  }
+}
+
+export { REGION_CATALOG }
