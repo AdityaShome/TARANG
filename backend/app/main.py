@@ -2,19 +2,21 @@
 TARANG — FastAPI Application Entrypoint
 SIH 2026 · PS 26067 · MoES/INCOIS
 
-Lifespan:
-  startup  → load YAML registry, warm Redis, init PostGIS pool
-  shutdown → close DB pool, flush Redis connection
+TARANG Backend API
 
-Routers mounted:
-  /api/metadata       → endpoints/metadata.py
-  /api/slice          → endpoints/slice.py
-  /api/volume         → endpoints/volume.py
-  /api/isosurface     → endpoints/isosurface.py
-  /api/instruments    → endpoints/instruments.py
-  /api/profile        → endpoints/profile.py
-  /wms                → wms_wcs/wms.py  (Option B only, skipped if THREDDS up)
-  /wcs                → wms_wcs/wcs.py  (Option B only)
+Routers:
+  /api/metadata
+  /api/slice
+  /api/volume
+  /api/isosurface
+  /api/instruments
+  /api/profile
+  /api/registry
+  /api/copilot
+
+AI Copilot:
+  /api/copilot
+  Provides Gemini-powered natural-language assistance for TARANG.
 """
 
 from contextlib import asynccontextmanager
@@ -35,119 +37,447 @@ from fastapi.responses import JSONResponse
 from backend.app.registry.loader import RegistryLoader
 from backend.app.cache import RedisCache
 from backend.app.db import Database
-from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile, eddy, registry as registry_endpoint
-logger = logging.getLogger("tarang")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "info").upper())
 
-# Global singletons — set during startup, used by all endpoints via app.state
+from backend.app.endpoints import (
+    metadata,
+    slice_,
+    volume,
+    isosurface,
+    instruments,
+    profile,
+    eddy,
+    registry as registry_endpoint,
+    copilot,
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────────────────────────
+
+logger = logging.getLogger("tarang")
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "info").upper()
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global services
+# ─────────────────────────────────────────────────────────────────────────────
+
 _registry: RegistryLoader | None = None
 _cache: RedisCache | None = None
 _db: Database | None = None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Application lifespan
+# ─────────────────────────────────────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application startup / shutdown lifecycle."""
+    """
+    Application startup and shutdown lifecycle.
+
+    Startup:
+      1. Load YAML registry
+      2. Start registry watcher
+      3. Connect Redis
+      4. Connect PostGIS if DATABASE_URL exists
+
+    Shutdown:
+      1. Disconnect Redis
+      2. Disconnect PostGIS
+      3. Stop registry watcher
+    """
+
     global _registry, _cache, _db
 
     logger.info("TARANG backend starting up...")
 
-    # ── Load YAML plugin registry ─────────────────────────────────────────────
-    registry_dir = os.getenv("REGISTRY_DIR", "registry")
+    # ─────────────────────────────────────────────────────────────────────────
+    # Load YAML registry
+    # ─────────────────────────────────────────────────────────────────────────
+
+    registry_dir = os.getenv(
+        "REGISTRY_DIR",
+        "registry"
+    )
+
     _registry = RegistryLoader(registry_dir)
+
     _registry.load_all()
-    logger.info(f"Registry loaded: {list(_registry.manifest_ids())} plugins")
+
+    logger.info(
+        "Registry loaded: %s plugins",
+        list(_registry.manifest_ids())
+    )
+
     app.state.registry = _registry
 
-    # ── Start filesystem watcher (auto hot-reload on YAML changes) ─────────────
-    # Drops a new YAML → live layer appears in frontend within 1s — no restart
-    _registry.start_watcher()
+    # ─────────────────────────────────────────────────────────────────────────
+    # Start filesystem watcher
+    # ─────────────────────────────────────────────────────────────────────────
 
-    # ── Connect to Redis ──────────────────────────────────────────────────────
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    try:
+        _registry.start_watcher()
+
+        logger.info(
+            "Registry filesystem watcher started"
+        )
+
+    except Exception as e:
+        logger.warning(
+            "Registry watcher could not start: %s",
+            e
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Connect Redis
+    # ─────────────────────────────────────────────────────────────────────────
+
+    redis_url = os.getenv(
+        "REDIS_URL",
+        "redis://localhost:6379/0"
+    )
+
     _cache = RedisCache(redis_url)
-    await _cache.connect()
+
+    try:
+        await _cache.connect()
+
+        logger.info(
+            "Redis connected successfully"
+        )
+
+    except Exception as e:
+        logger.warning(
+            "Redis unavailable: %s",
+            e
+        )
+
     app.state.cache = _cache
 
-    # ── Connect to PostGIS ────────────────────────────────────────────────────
-    database_url = os.getenv("DATABASE_URL", "")
+    # ─────────────────────────────────────────────────────────────────────────
+    # Connect PostGIS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    database_url = os.getenv(
+        "DATABASE_URL",
+        ""
+    )
+
     if database_url:
-        _db = Database(database_url)
-        await _db.connect()
-        await _db.ensure_schema()
-        logger.info("PostGIS connected and schema verified")
+
+        try:
+            _db = Database(database_url)
+
+            await _db.connect()
+
+            await _db.ensure_schema()
+
+            logger.info(
+                "PostGIS connected and schema verified"
+            )
+
+        except Exception as e:
+
+            logger.warning(
+                "PostGIS connection failed: %s",
+                e
+            )
+
+            _db = None
+
     else:
-        logger.warning("DATABASE_URL not set — instrument endpoints will return empty results")
+
+        logger.warning(
+            "DATABASE_URL not set — "
+            "instrument endpoints will return empty results"
+        )
+
         _db = None
+
     app.state.db = _db
 
-    logger.info("TARANG backend ready ✓")
-    yield  # ── Application runs ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Gemini API status
+    # ─────────────────────────────────────────────────────────────────────────
 
-    # ── Shutdown ──────────────────────────────────────────────────────────────
-    logger.info("TARANG backend shutting down...")
+    if os.getenv("GEMINI_API_KEY"):
+
+        logger.info(
+            "Gemini API key detected — AI Copilot enabled"
+        )
+
+    else:
+
+        logger.warning(
+            "GEMINI_API_KEY not set — "
+            "AI Copilot will not work until the key is configured"
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Backend ready
+    # ─────────────────────────────────────────────────────────────────────────
+
+    logger.info(
+        "TARANG backend ready ✓"
+    )
+
+    yield
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Shutdown
+    # ─────────────────────────────────────────────────────────────────────────
+
+    logger.info(
+        "TARANG backend shutting down..."
+    )
+
     if _cache:
-        await _cache.disconnect()
+
+        try:
+            await _cache.disconnect()
+
+        except Exception as e:
+
+            logger.warning(
+                "Redis shutdown error: %s",
+                e
+            )
+
     if _db:
-        await _db.disconnect()
+
+        try:
+            await _db.disconnect()
+
+        except Exception as e:
+
+            logger.warning(
+                "PostGIS shutdown error: %s",
+                e
+            )
+
     if _registry:
-        _registry.stop_watcher()
-    logger.info("TARANG backend shutdown complete")
+
+        try:
+            _registry.stop_watcher()
+
+        except Exception as e:
+
+            logger.warning(
+                "Registry watcher shutdown error: %s",
+                e
+            )
+
+    logger.info(
+        "TARANG backend shutdown complete"
+    )
 
 
-# ── FastAPI App ───────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# FastAPI application
+# ─────────────────────────────────────────────────────────────────────────────
+
 app = FastAPI(
+
     title="TARANG Ocean Visualization API",
+
     description=(
-        "Backend API for TARANG — Web-Based Interactive 3D Ocean Visualization Platform. "
+        "Backend API for TARANG — "
+        "Web-Based Interactive 3D Ocean Visualization Platform. "
+
         "SIH 2026 · PS 26067 · MoES/INCOIS. "
-        "Provides binary-serialized depth-slice, volume, and isosurface data from "
-        "HYCOM/INCOIS-GODAS/Copernicus ocean model output, plus Argo float profiles."
+
+        "Provides binary-serialized depth-slice, volume, "
+        "and isosurface data from HYCOM, "
+        "INCOIS-GODAS and Copernicus ocean model output, "
+        "plus Argo float profiles and an AI-powered "
+        "natural-language Ocean Copilot."
     ),
+
     version="1.0.0",
+
     docs_url="/api/docs",
+
     redoc_url="/api/redoc",
+
     lifespan=lifespan,
 )
 
-# ── CORS (Nginx handles prod; this is for local dev without Nginx) ────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CORS
+# ─────────────────────────────────────────────────────────────────────────────
+
 app.add_middleware(
+
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost"],
-    allow_methods=["GET", "OPTIONS"],
-    allow_headers=["*"],
+
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost",
+    ],
+
+    allow_credentials=True,
+
+    allow_methods=[
+        "GET",
+        "POST",
+        "OPTIONS",
+    ],
+
+    allow_headers=[
+        "*"
+    ],
 )
 
-# ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(metadata.router,          prefix="/api")
-app.include_router(slice_.router,            prefix="/api")
-app.include_router(volume.router,            prefix="/api")
-app.include_router(isosurface.router,        prefix="/api")
-app.include_router(instruments.router,       prefix="/api")
-app.include_router(profile.router,           prefix="/api")
-app.include_router(eddy.router,              prefix="/api")
-app.include_router(registry_endpoint.router, prefix="/api")
 
-# Option B: hand-rolled OGC endpoints (only active when OPTION_B_MODE=true)
-if os.getenv("OPTION_B_MODE", "false").lower() == "true":
+# ─────────────────────────────────────────────────────────────────────────────
+# Standard TARANG API routers
+# ─────────────────────────────────────────────────────────────────────────────
+
+app.include_router(
+    metadata.router,
+    prefix="/api"
+)
+
+app.include_router(
+    slice_.router,
+    prefix="/api"
+)
+
+app.include_router(
+    volume.router,
+    prefix="/api"
+)
+
+app.include_router(
+    isosurface.router,
+    prefix="/api"
+)
+
+app.include_router(
+    instruments.router,
+    prefix="/api"
+)
+
+app.include_router(
+    profile.router,
+    prefix="/api"
+)
+
+app.include_router(
+    eddy.router,
+    prefix="/api"
+)
+
+app.include_router(
+    registry_endpoint.router,
+    prefix="/api"
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI COPILOT ROUTER
+# ─────────────────────────────────────────────────────────────────────────────
+
+app.include_router(
+    copilot.router,
+    prefix="/api"
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Option B — WMS/WCS
+# ─────────────────────────────────────────────────────────────────────────────
+
+if os.getenv(
+    "OPTION_B_MODE",
+    "false"
+).lower() == "true":
+
     from backend.app.wms_wcs import wms, wcs
-    app.include_router(wms.router)
-    app.include_router(wcs.router)
-    logger.info("Option B mode: hand-rolled WMS/WCS endpoints mounted")
+
+    app.include_router(
+        wms.router
+    )
+
+    app.include_router(
+        wcs.router
+    )
+
+    logger.info(
+        "Option B mode enabled: "
+        "WMS/WCS endpoints mounted"
+    )
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
-@app.get("/health", tags=["system"])
+# ─────────────────────────────────────────────────────────────────────────────
+# Health check
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get(
+    "/health",
+    tags=["system"]
+)
 async def health():
-    """Smoke test endpoint — used by Docker healthcheck and CI."""
+    """
+    Backend health check.
+
+    Used by Docker, CI and local development.
+    """
+
+    registry_size = 0
+
+    if getattr(
+        app.state,
+        "registry",
+        None
+    ):
+
+        registry_size = len(
+            list(
+                app.state.registry.manifest_ids()
+            )
+        )
+
     return JSONResponse({
+
         "status": "ok",
+
         "service": "tarang-backend",
-        "registry_size": len(list(app.state.registry.manifest_ids())) if app.state.registry else 0,
+
+        "registry_size": registry_size,
+
+        "ai_copilot": bool(
+            os.getenv("GEMINI_API_KEY")
+        ),
+
     })
 
 
-# ── Root redirect ─────────────────────────────────────────────────────────────
-@app.get("/", include_in_schema=False)
+# ─────────────────────────────────────────────────────────────────────────────
+# Root endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get(
+    "/",
+    include_in_schema=False
+)
 async def root():
-    return JSONResponse({"message": "TARANG API. See /api/docs for endpoints."})
+
+    return JSONResponse({
+
+        "message": "TARANG API",
+
+        "docs": "/api/docs",
+
+        "health": "/health",
+
+        "copilot": "/api/copilot",
+
+    })
