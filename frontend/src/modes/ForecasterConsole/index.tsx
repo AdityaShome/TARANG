@@ -8,12 +8,9 @@ import { ProfilePopover } from '../../charts/ProfilePopover'
 import { Legend } from '../../components/Legend'
 import { LanguageSwitcher } from '../../components/LanguageSwitcher'
 import { useT } from '../../i18n/useT'
-<<<<<<< HEAD
 import { GlossaryPanel } from '../../components/GlossaryPanel'
 import { useState } from 'react'
-=======
 import { OceanCopilot } from '../../components/OceanCopilot/OceanCopilot'
->>>>>>> 54c4dda (Add AI Ocean Copilot)
 
 /**
  * Forecaster Console — Power-user UI mode
@@ -26,18 +23,14 @@ import { OceanCopilot } from '../../components/OceanCopilot/OceanCopilot'
  */
 export function ForecasterConsole() {
   const selectedPlatformId = useTarangStore(s => s.selectedPlatformId)
-<<<<<<< HEAD
   const hasSearchedRegion  = useTarangStore(s => s.hasSearchedRegion)
   const setUIMode          = useTarangStore(s => s.setUIMode)
-=======
-  const setUIMode = useTarangStore(s => s.setUIMode)
->>>>>>> 54c4dda (Add AI Ocean Copilot)
   const t = useT()
   const [showGlossary, setShowGlossary] = useState(false)
 
   return (
     <div id="forecaster-console" style={styles.container}>
-      {/* ── 3D Scene (shared render core) ──────────────────────────────── */}
+      {/* ── 3D Scene (shared render core) ────────────────────────────── */}
       <div style={styles.sceneWrapper}>
         <SceneManager />
         {!hasSearchedRegion && (
@@ -47,10 +40,10 @@ export function ForecasterConsole() {
         )}
       </div>
 
-      {/* ── AI Ocean Copilot ───────────────────────────────────────────── */}
+      {/* ── AI Ocean Copilot ─────────────────────────────────────────── */}
       <OceanCopilot />
 
-      {/* ── Control Sidebar ────────────────────────────────────────────── */}
+      {/* ── Control Sidebar ──────────────────────────────────────────── */}
       <aside id="control-panel" style={styles.sidebar}>
         <div style={styles.brandHeader}>
           <div style={styles.brandRow}>
@@ -91,15 +84,15 @@ export function ForecasterConsole() {
         </div>
       </aside>
 
-      {/* ── Profile Popover (visible when a float is selected) ─────────── */}
+      {/* ── Profile Popover (visible when a float is selected) ───────── */}
       {selectedPlatformId && (
         <ProfilePopover platformId={selectedPlatformId} />
       )}
 
-      {/* ── Thermal Legend ─────────────────────────────────────────────── */}
+      {/* ── Thermal Legend ────────────────────────────────────────────── */}
       <Legend />
       
-      {/* ── Glossary Panel ─────────────────────────────────────────────── */}
+      {/* ── Glossary Panel ────────────────────────────────────────────── */}
       {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
     </div>
   )
@@ -120,7 +113,6 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'relative',
     overflow: 'hidden',
   },
-<<<<<<< HEAD
   searchHint: {
     position:       'absolute',
     top:            '20px',
@@ -137,9 +129,6 @@ const styles: Record<string, React.CSSProperties> = {
     pointerEvents:  'none',
     zIndex:         5,
   },
-=======
-
->>>>>>> 54c4dda (Add AI Ocean Copilot)
   sidebar: {
     width: '320px',
     minWidth: '320px',
