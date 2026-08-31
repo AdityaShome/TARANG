@@ -65,7 +65,9 @@ async def get_slice(
         resp = make_binary_response(header, result.data)
         return resp.body
 
-    raw = await cache.get_or_compute(key, TTL_SLICE, compute)
+    raw = await cache.get_or_compute(key, TTL_SLICE, compute, metric={
+        "kind": "slice", "source": source, "var": var, "bbox": bbox,
+    })
 
     from fastapi import Response
     return Response(content=raw, media_type="application/octet-stream")
