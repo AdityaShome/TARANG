@@ -41,6 +41,7 @@ async def get_profile(
     time:        str | None = Query(None, description="ISO date filter (optional)"),
     source:      str | None = Query(None, description="Optional model source ID for delta comparison"),
     time_idx:    int = Query(0, description="Model time step index for delta comparison"),
+    mode:        str = Query("live", description="Data mode (live|cached)"),
 ):
     """
     Returns:
@@ -109,21 +110,6 @@ async def get_profile(
             try:
                 import numpy as np
                 adapter = registry.get_adapter(source)
-                adapter_var = adapter.manifest.variable
-                std_name = adapter.manifest.standard_name
-
-                # Match Temperature
-                if profile["temperature"] and "temperature" in profile["units"] and std_name == "sea_water_potential_temperature":
-                    model_depths, model_temp = adapter.get_profile_at(adapter_var, profile["lat"], profile["lon"], time_idx)
-                    valid_mask = model_temp != adapter._extract_cf_meta(adapter.open(None), adapter_var, adapter._resolve_depth_levels(adapter.open(None))).missing_value
-                    if np.any(valid_mask):
-                        interp_temp = np.interp(profile["depth"], model_depths[valid_mask], model_temp[valid_mask], left=np.nan, right=np.nan)
-                        profile["model_temperature"] = [float(v) if not np.isnan(v) else None for v in interp_temp]
-                        profile["delta_temperature"] = [float(m - o) if m is not None and o is not None else None
-                                                        for m, o in zip(profile["model_temperature"], profile["temperature"])]
-
-                # Match Salinity
-                if profile["salinity"] and "salinity" in profile["units"] and std_name == "sea_water_salinity":
                     model_depths, model_sal = adapter.get_profile_at(adapter_var, profile["lat"], profile["lon"], time_idx)
                     valid_mask = model_sal != adapter._extract_cf_meta(adapter.open(None), adapter_var, adapter._resolve_depth_levels(adapter.open(None))).missing_value
                     if np.any(valid_mask):

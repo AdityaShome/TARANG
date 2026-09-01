@@ -142,6 +142,7 @@ class DataSourceAdapter(abc.ABC):
         depth_m: float,
         time_idx: int,
         bbox: tuple[float, float, float, float],
+        mode: str = "live",
     ) -> SliceResult:
         """
         Return a 2D (lat, lon) depth-slice at the nearest depth level to depth_m.
@@ -155,6 +156,7 @@ class DataSourceAdapter(abc.ABC):
         variable: str,
         time_idx: int,
         bbox: tuple[float, float, float, float],
+        mode: str = "live",
     ) -> VolumeResult:
         """
         Return the full depth column as a 3D (depth, lat, lon) array.

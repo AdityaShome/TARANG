@@ -31,6 +31,7 @@ import { InstrumentMarkerLayer } from './layers/InstrumentMarkerLayer'
 import { VectorLayer } from './layers/VectorLayer'
 import { EddyOverlayLayer } from './layers/EddyOverlayLayer'
 import { FrontOverlayLayer } from './layers/FrontOverlayLayer'
+import { DeltaOverlayLayer } from './layers/DeltaOverlayLayer'
 import { OceanCubeLayer } from './layers/OceanCubeLayer'
 
 interface SceneManagerProps {
@@ -169,6 +170,14 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
   const flyToTarget     = useTarangStore(s => s.flyToTarget)
   const clearFlyToTarget = useTarangStore(s => s.clearFlyToTarget)
   const hasSearchedRegion = useTarangStore(s => s.hasSearchedRegion)
+  const showHomeOverlay   = useTarangStore(s => s.showHomeOverlay)
+
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.autoRotate = showHomeOverlay || !!autoRotate
+      controlsRef.current.autoRotateSpeed = showHomeOverlay ? 4.0 : 0.25
+    }
+  }, [showHomeOverlay, autoRotate])
 
   // ── Mount: build the entire scene ──────────────────────────────────────────
   useEffect(() => {
@@ -312,6 +321,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     layerManager.addLayer('vectors',    new VectorLayer())
     layerManager.addLayer('eddy',       new EddyOverlayLayer())
     layerManager.addLayer('fronts',     new FrontOverlayLayer())
+    layerManager.addLayer('delta',      new DeltaOverlayLayer())
     layerManager.addLayer('cube',       new OceanCubeLayer())
 
     // (A hardcoded "Bay of Bengal region highlight ring" used to live here, always drawn
@@ -539,7 +549,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     // update() calls below. Without this, whichever layer last successfully fetched data stays
     // visible forever: switching render mode or unchecking a Layers checkbox only stopped that
     // layer from being *updated*, never hid what it had already rendered.
-    const ALL_LAYER_IDS = ['slice', 'volume', 'isosurface', 'cube', 'markers', 'vectors', 'eddy', 'fronts'] as const
+    const ALL_LAYER_IDS = ['slice', 'volume', 'isosurface', 'cube', 'markers', 'vectors', 'eddy', 'fronts', 'delta'] as const
     const activeLayerIds = new Set<string>()
 
     // store.setActiveSource() clears activeVar synchronously so it can never name a variable
@@ -561,6 +571,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     if (layerVisibility['vectors'])  activeLayerIds.add('vectors')
     if (layerVisibility['eddy'])     activeLayerIds.add('eddy')
     if (layerVisibility['fronts'])   activeLayerIds.add('fronts')
+    if (layerVisibility['delta'])    activeLayerIds.add('delta')
 
     for (const id of ALL_LAYER_IDS) {
       layerManager.getLayer(id)?.setVisible(activeLayerIds.has(id))
@@ -621,6 +632,11 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     if (activeLayerIds.has('fronts')) {
       const layer = layerManager.getLayer('fronts')
       if (layer) pending.push(layer.update({ source: activeSourceId, variable: activeVar, bbox, timeIdx: activeTimeIdx }))
+    }
+
+    if (activeLayerIds.has('delta')) {
+      const layer = layerManager.getLayer('delta')
+      if (layer) pending.push(layer.update({ source: activeSourceId, bbox, timeIdx: activeTimeIdx }))
     }
 
     if (activeLayerIds.has('cube')) {

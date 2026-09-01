@@ -3,6 +3,7 @@ import { useTarangStore } from './state/store'
 import { fetchSources, fetchMetadata } from './api/client'
 import { ForecasterConsole } from './modes/ForecasterConsole'
 import { ExplorerMode } from './modes/ExplorerMode'
+import { VolumeWorkspace } from './modes/VolumeWorkspace'
 import './index.css'
 
 /**
@@ -17,8 +18,11 @@ import './index.css'
  * On mount: loads the source list and initial metadata from /api/sources
  * and /api/metadata to populate all selectors before the scene renders.
  */
+import { HomeOverlay } from './components/HomeOverlay'
+
 export default function App() {
   const uiMode          = useTarangStore(s => s.uiMode)
+  const renderMode      = useTarangStore(s => s.renderMode)
   const activeSourceId  = useTarangStore(s => s.activeSourceId)
   const setSources      = useTarangStore(s => s.setSources)
   const setDepthLevels  = useTarangStore(s => s.setDepthLevels)
@@ -65,9 +69,12 @@ export default function App() {
 
   return (
     <div id="tarang-root" style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
-      {uiMode === 'console'
-        ? <ForecasterConsole />
-        : <ExplorerMode />
+      <HomeOverlay />
+      {renderMode === 'cube' 
+        ? <VolumeWorkspace /> 
+        : uiMode === 'console'
+          ? <ForecasterConsole />
+          : <ExplorerMode />
       }
     </div>
   )

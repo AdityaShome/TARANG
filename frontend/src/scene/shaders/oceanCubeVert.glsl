@@ -3,8 +3,8 @@
 // The mesh is a unit BoxGeometry centred at origin; SceneManager sets its
 // world transform via position/quaternion/scale after every fetch.
 
-varying vec3 vLocalPos;   // [0,1] in local box space — used for depth gradient + seabed
-varying vec3 vWorldPos;   // world-space position — used for ray direction in raymarch
+out vec3 vLocalPos;
+out vec3 vWorldPos;
 
 void main() {
   // position is already in local box space [-0.5, 0.5]; shift to [0, 1].

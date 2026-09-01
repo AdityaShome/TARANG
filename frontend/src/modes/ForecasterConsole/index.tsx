@@ -28,72 +28,77 @@ export function ForecasterConsole() {
   const t = useT()
   const [showGlossary, setShowGlossary] = useState(false)
 
+  const showHomeOverlay = useTarangStore(s => s.showHomeOverlay)
+
   return (
     <div id="forecaster-console" style={styles.container}>
       {/* ── 3D Scene (shared render core) ────────────────────────────── */}
       <div style={styles.sceneWrapper}>
         <SceneManager />
-        {!hasSearchedRegion && (
+        {!hasSearchedRegion && !showHomeOverlay && (
           <div id="search-hint" style={styles.searchHint}>
             {t('searchHint')}
           </div>
         )}
       </div>
 
-      {/* ── AI Ocean Copilot ─────────────────────────────────────────── */}
-      <OceanCopilot />
+      {!showHomeOverlay && (
+        <>
+          {/* ── AI Ocean Copilot ─────────────────────────────────────────── */}
+          <OceanCopilot />
 
-      {/* ── Control Sidebar ──────────────────────────────────────────── */}
-      <aside id="control-panel" style={styles.sidebar}>
-        <div style={styles.brandHeader}>
-          <div style={styles.brandRow}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={styles.brandText}>TARANG</span>
-              <button 
-                onClick={() => setShowGlossary(true)}
-                style={{ background: 'rgba(0, 212, 255, 0.1)', border: '1px solid rgba(0, 212, 255, 0.3)', color: '#00d4ff', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '12px' }}
-                title="Glossary"
-              >
-                ?
-              </button>
+          {/* ── Control Sidebar ──────────────────────────────────────────── */}
+          <aside id="control-panel" style={styles.sidebar}>
+            <div style={styles.brandHeader}>
+              <div style={styles.brandRow}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={styles.brandText}>TARANG</span>
+                  <button 
+                    onClick={() => setShowGlossary(true)}
+                    style={{ background: 'rgba(0, 212, 255, 0.1)', border: '1px solid rgba(0, 212, 255, 0.3)', color: '#00d4ff', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '12px' }}
+                    title="Glossary"
+                  >
+                    ?
+                  </button>
+                </div>
+                <LanguageSwitcher />
+              </div>
+
+              <span style={styles.brandSub}>{t('brandSub')}</span>
             </div>
-            <LanguageSwitcher />
-          </div>
 
-          <span style={styles.brandSub}>{t('brandSub')}</span>
-        </div>
+            <SearchBar />
+            <ControlPanel />
 
-        <SearchBar />
+            {/* Mode switch button */}
+            <button
+              id="switch-to-explorer"
+              style={styles.modeBtn}
+              onClick={() => setUIMode('explorer')}
+            >
+              ✦ {t('explorerModeBtn')}
+            </button>
 
-        <ControlPanel />
+            {/* Attribution (§17 — dataset licensing) */}
+            <div style={styles.attribution}>
+              Data: HYCOM · Argo GDAC · INCOIS
+              <br />
+              SIH 2026 · PS 26067
+            </div>
+          </aside>
 
-        {/* Mode switch button */}
-        <button
-          id="switch-to-explorer"
-          style={styles.modeBtn}
-          onClick={() => setUIMode('explorer')}
-        >
-          ✦ {t('explorerModeBtn')}
-        </button>
+          {/* ── Profile Popover (visible when a float is selected) ───────── */}
+          {selectedPlatformId && (
+            <ProfilePopover platformId={selectedPlatformId} />
+          )}
 
-        {/* Attribution (§17 — dataset licensing) */}
-        <div style={styles.attribution}>
-          Data: HYCOM · Argo GDAC · INCOIS
-          <br />
-          SIH 2026 · PS 26067
-        </div>
-      </aside>
-
-      {/* ── Profile Popover (visible when a float is selected) ───────── */}
-      {selectedPlatformId && (
-        <ProfilePopover platformId={selectedPlatformId} />
+          {/* ── Thermal Legend ────────────────────────────────────────────── */}
+          <Legend />
+          
+          {/* ── Glossary Panel ────────────────────────────────────────────── */}
+          {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
+        </>
       )}
-
-      {/* ── Thermal Legend ────────────────────────────────────────────── */}
-      <Legend />
-      
-      {/* ── Glossary Panel ────────────────────────────────────────────── */}
-      {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
     </div>
   )
 }

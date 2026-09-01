@@ -1,0 +1,48 @@
+# HYCOM GLBy0.08 Bay of Bengal — one source, four variables (water_temp, salinity,
+# water_u, water_v) in one file; the frontend variable dropdown switches between them.
+
+id: hycom_bob
+label: "HYCOM GLBy0.08 — Bay of Bengal"
+description: "Depth-resolved temperature, salinity and currents (u/v) from HYCOM GLBy0.08 expt 93.0 for the Bay of Bengal. Pick the variable in the Variable selector."
+
+adapter: NetCDFAdapter
+source: "http://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0"
+local_cache: "data/netcdf/hycom_bob.nc"
+local_cache_bbox: [80, 5, 100, 25]   # Bay of Bengal
+decode_times: false
+# The variable the source loads with — the selector switches among all four.
+variable: water_temp
+standard_name: sea_water_temperature
+long_name: "Water Temperature"
+units: degC
+valid_min: 1.0
+valid_max: 32.0
+missing_value: -30000.0
+
+colormap: viridis
+render_type: volume
+
+# Fixture grid depth levels (data/netcdf/hycom_bob.nc) — non-uniform, snap only (§8.1)
+depth_levels:
+  - 0
+  - 5
+  - 10
+  - 20
+  - 30
+  - 50
+  - 75
+  - 100
+  - 150
+  - 200
+  - 250
+  - 300
+  - 400
+  - 500
+  - 750
+  - 1000
+  - 1500
+  - 2000
+  - 3000
+  - 4000
+
+default_bbox: [80, 5, 100, 25]
