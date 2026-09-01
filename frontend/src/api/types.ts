@@ -54,6 +54,11 @@ export interface IsosurfaceHeader extends CFMetadata {
   threshold:    number
   time:         string
   volume_shape: [number, number, number]  // (depth, lat, lon) — the voxel grid verts are indexed into
+  // The lat/lon extent the backend ACTUALLY loaded (may be snapped/clipped from the requested
+  // bbox for live sources or partial-coverage regions). Populated by meta.to_header_dict() —
+  // identical to VolumeHeader.bounds. IsosurfaceLayer MUST place its mesh from this, not from
+  // the requested bbox, or it renders at a different position/rotation than VolumeLayer.
+  bounds:       ResolvedBounds
 }
 
 // ── Metadata endpoint response ────────────────────────────────────────────────

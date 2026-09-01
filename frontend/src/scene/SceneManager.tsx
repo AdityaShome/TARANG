@@ -31,6 +31,7 @@ import { InstrumentMarkerLayer } from './layers/InstrumentMarkerLayer'
 import { VectorLayer } from './layers/VectorLayer'
 import { EddyOverlayLayer } from './layers/EddyOverlayLayer'
 import { FrontOverlayLayer } from './layers/FrontOverlayLayer'
+import { clampRegionSpan, REGION_MAX_PICK_SPAN_DEG } from '../api/geocode'
 
 interface SceneManagerProps {
   autoRotate?: boolean
@@ -461,10 +462,19 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
         // A degenerate (near-zero-area) drag reads as an accidental click — fall back to the
         // same fixed-size box a plain click would produce, centred on the release point.
         const [minLon, minLat, maxLon, maxLat] = bbox
-        const region = (maxLon - minLon < 0.5 || maxLat - minLat < 0.5)
+        const rawRegion = (maxLon - minLon < 0.5 || maxLat - minLat < 0.5)
           ? boxAround(end.lat, end.lon, PICK_SPAN_DEG)
           : bbox
-        useTarangStore.getState().searchRegion(region, `Custom region (${end.lat.toFixed(1)}, ${end.lon.toFixed(1)})`)
+        // Clamp a hand-drawn box to the interactive-pick envelope — a sliver starves the
+        // marching-cubes grid, and anything approaching half the globe stops being one coherent
+        // region (see REGION_MAX_PICK_SPAN_DEG).
+        const region = clampRegionSpan(rawRegion, REGION_MAX_PICK_SPAN_DEG)
+        // Label from the CLAMPED region's centre, not the drag-release point — after a big drag
+        // gets shrunk+recentred those differ, and showing the release point misdescribes what's
+        // actually on screen.
+        const cLat = (region[1] + region[3]) / 2
+        const cLon = (region[0] + region[2]) / 2
+        useTarangStore.getState().searchRegion(region, `Custom region (${cLat.toFixed(1)}, ${cLon.toFixed(1)})`)
         useTarangStore.getState().setMapSelectMode('off')
         return
       }
@@ -479,8 +489,11 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       if (mode === 'click') {
         const hit = raycastGlobe(e)
         if (hit) {
+          // clampRegionSpan keeps this consistent with search + drag; boxAround already
+          // produces an in-range 24deg box, but near the poles the ±90/±180 edge clamp can
+          // shrink one axis below the minimum span.
           useTarangStore.getState().searchRegion(
-            boxAround(hit.lat, hit.lon, PICK_SPAN_DEG),
+            clampRegionSpan(boxAround(hit.lat, hit.lon, PICK_SPAN_DEG), REGION_MAX_PICK_SPAN_DEG),
             `Custom point (${hit.lat.toFixed(1)}, ${hit.lon.toFixed(1)})`
           )
           useTarangStore.getState().setMapSelectMode('off')

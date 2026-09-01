@@ -23,6 +23,13 @@ export const REGION_CATALOG: CatalogRegion[] = [
   { name: 'Southern Ocean', aliases: ['antarctic ocean'], bbox: [-180, -80, 180, -60] },
   { name: 'Arctic Ocean', bbox: [-180, 66, 180, 90] },
 
+  // Seas bordering the Indian Ocean basin that Nominatim disambiguates badly (its top hit for
+  // "Red Sea" / "Persian Gulf" is a land administrative region, not the water body).
+  { name: 'Red Sea', bbox: [32, 12, 43, 28] },
+  { name: 'Persian Gulf', aliases: ['arabian gulf'], bbox: [48, 24, 57, 30] },
+  { name: 'Gulf of Aden', bbox: [43, 11, 51, 15] },
+  { name: 'Mozambique Channel', bbox: [39, -26, 49, -11] },
+
   // ── Primary seas ─────────────────────────────────────────────────────────
   { name: 'Bay of Bengal', aliases: ['bob'], bbox: [80, 5, 100, 22], hasModelData: true },
   { name: 'Arabian Sea', bbox: [55, 5, 75, 25], hasModelData: true },

@@ -64,3 +64,8 @@ button { font-family: var(--font-main); }
 }
 
 .fade-in { animation: fadeIn 0.4s ease forwards; }
+
+/* Spinner (VolumeIsoWorkspace loading state) */
+@keyframes tarang-spin {
+  to { transform: rotate(360deg); }
+}

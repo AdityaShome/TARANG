@@ -169,7 +169,9 @@ const styles: Record<string, React.CSSProperties> = {
     border:         '1px solid rgba(0, 180, 255, 0.25)',
     borderRadius:   '14px',
     padding:        '20px',
-    zIndex:         30,
+    // Must float above VolumeIsoWorkspace's modal (zIndex 200) — clicking a marker inside that
+    // panel still opens this same popover, per the PS's co-visualization requirement.
+    zIndex:         210,
     boxShadow:      '0 8px 48px rgba(0, 80, 180, 0.3)',
     fontFamily:     "'Inter', sans-serif",
   },

@@ -74,11 +74,16 @@ export function SearchBar() {
       if (found.length === 0) {
         setError(t('noMatch', { query }))
         setResults([])
-      } else if (found.length === 1) {
-        pick(found[0])
       } else {
-        setResults(found)
-        setShowResults(true)
+        // Always navigate to the best match right away — a submitted search must never leave a
+        // stale region (e.g. a previous click/drag custom pick) on screen just because the query
+        // was ambiguous. When there's more than one hit, keep the list open so the researcher can
+        // refine, but the map has already moved to the top result.
+        pick(found[0], { keepList: found.length > 1 })
+        if (found.length > 1) {
+          setResults(found)
+          setShowResults(true)
+        }
       }
     } catch (e: unknown) {
       if ((e as Error).name !== 'AbortError') {
@@ -89,10 +94,12 @@ export function SearchBar() {
     }
   }
 
-  function pick(result: GeocodeResult) {
+  function pick(result: GeocodeResult, opts?: { keepList?: boolean }) {
     searchRegion(result.bbox, shortLabel(result.label))
-    setShowResults(false)
-    setResults([])
+    if (!opts?.keepList) {
+      setShowResults(false)
+      setResults([])
+    }
   }
 
   return (

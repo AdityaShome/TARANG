@@ -378,18 +378,15 @@ app.include_router(
 # Option B — WMS/WCS
 # ─────────────────────────────────────────────────────────────────────────────
 
-if os.getenv(
-# ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(metadata.router,          prefix="/api")
-app.include_router(slice_.router,            prefix="/api")
-app.include_router(volume.router,            prefix="/api")
-app.include_router(isosurface.router,        prefix="/api")
-app.include_router(instruments.router,       prefix="/api")
-app.include_router(profile.router,           prefix="/api")
-app.include_router(eddy.router,              prefix="/api")
-app.include_router(metrics.router,           prefix="/api")
-app.include_router(preview.router,           prefix="/api")
-app.include_router(registry_endpoint.router, prefix="/api")
+app.include_router(
+    metrics.router,
+    prefix="/api"
+)
+
+app.include_router(
+    preview.router,
+    prefix="/api"
+)
 
 # Option B: hand-rolled OGC endpoints (only active when OPTION_B_MODE=true)
 if os.getenv("OPTION_B_MODE", "false").lower() == "true":

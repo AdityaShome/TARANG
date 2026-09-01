@@ -203,6 +203,8 @@ export const useTarangStore = create<TarangState>()(
     setActiveTimeIdx:    (idx)     => set({ activeTimeIdx: idx }),
     setBbox:             (bbox)    => set({ bbox }),
     // Changes the bbox (every layer re-fetches) and flies the camera there; source/var unchanged.
+    // Also disarms any active click/drag map-pick mode — a name search is an explicit override,
+    // so a still-armed pick must not turn the researcher's next globe click into a stray region.
     searchRegion:        (bbox, label) => {
       const [minLon, minLat, maxLon, maxLat] = bbox
       set({
@@ -210,6 +212,7 @@ export const useTarangStore = create<TarangState>()(
         regionLabel: label,
         hasSearchedRegion: true,
         flyToTarget: { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 },
+        mapSelectMode: 'off',
         activeDepthIdx: 0,
         activeTimeIdx: 0,
       })
