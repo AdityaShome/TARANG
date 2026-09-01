@@ -180,7 +180,7 @@ export interface ColormapConfig {
 }
 
 // ── Render modes ──────────────────────────────────────────────────────────────
-export type RenderMode = 'slice' | 'volume' | 'isosurface'
+export type RenderMode = 'slice' | 'volume' | 'isosurface' | 'cube'
 export type UIMode     = 'console' | 'explorer'
 
 // ── Layer params (dispatched to LayerManager) ─────────────────────────────────

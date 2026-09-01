@@ -156,6 +156,13 @@ export const translations = {
     te: 'ఐసో',
     ta: 'ஐசோ',
   },
+  modeCube: {
+    en: 'Cube',
+    hi: 'घन',
+    bn: 'ঘনক',
+    te: 'క్యూబ్',
+    ta: 'கனசதுரம்',
+  },
   threshold: {
     en: 'Threshold',
     hi: 'थ्रेशोल्ड',
@@ -276,6 +283,13 @@ export const translations = {
     bn: 'ফ্রন্ট',
     te: 'ముందుభాగాలు',
     ta: 'முன்னணிகள்',
+  },
+  layerCube: {
+    en: 'Ocean Cube',
+    hi: 'महासागर घन',
+    bn: 'মহাসাগর ঘনক',
+    te: 'సముద్ర క్యూబ్',
+    ta: 'கடல் கனசதுரம்',
   },
 
   // ── Explorer mode flythrough ─────────────────────────────────────────────

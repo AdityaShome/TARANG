@@ -92,14 +92,20 @@ export function ControlPanel() {
       {/* ── Render Mode ─────────────────────────────────────────────── */}
       <Section label={t('renderMode')}>
         <div style={styles.toggleGroup}>
-          {(['slice', 'volume', 'isosurface'] as const).map(mode => (
+          {(['slice', 'volume', 'isosurface', 'cube'] as const).map(mode => (
             <button
               key={mode}
               id={`render-mode-${mode}`}
               style={{ ...styles.toggle, ...(renderMode === mode ? styles.toggleActive : {}) }}
               onClick={() => setRenderMode(mode)}
             >
-              {mode === 'slice' ? `⬜ ${t('modeSlice')}` : mode === 'volume' ? `🧊 ${t('modeVolume')}` : `🔵 ${t('modeIso')}`}
+              {mode === 'slice'
+                ? `⧞ ${t('modeSlice')}`
+                : mode === 'volume'
+                ? `🧥 ${t('modeVolume')}`
+                : mode === 'isosurface'
+                ? `🔵 ${t('modeIso')}`
+                : `🗳️ ${t('modeCube')}`}
             </button>
           ))}
         </div>

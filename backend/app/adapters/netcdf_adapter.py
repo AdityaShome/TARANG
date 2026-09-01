@@ -168,7 +168,7 @@ class NetCDFAdapter(DataSourceAdapter):
                         engine=engine,
                         mask_and_scale=True,
                         decode_times=True,
-                        # No chunks parameter, let xarray manage memory without dask
+                        drop_variables=getattr(self, 'manifest', {}).get("drop_variables")
                     )
                     logger.info(f"Opened with engine '{engine}': {list(ds.data_vars)}")
                     return ds

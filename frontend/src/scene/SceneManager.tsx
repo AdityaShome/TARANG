@@ -31,6 +31,7 @@ import { InstrumentMarkerLayer } from './layers/InstrumentMarkerLayer'
 import { VectorLayer } from './layers/VectorLayer'
 import { EddyOverlayLayer } from './layers/EddyOverlayLayer'
 import { FrontOverlayLayer } from './layers/FrontOverlayLayer'
+import { OceanCubeLayer } from './layers/OceanCubeLayer'
 
 interface SceneManagerProps {
   autoRotate?: boolean
@@ -311,23 +312,28 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     layerManager.addLayer('vectors',    new VectorLayer())
     layerManager.addLayer('eddy',       new EddyOverlayLayer())
     layerManager.addLayer('fronts',     new FrontOverlayLayer())
+    layerManager.addLayer('cube',       new OceanCubeLayer())
 
     // (A hardcoded "Bay of Bengal region highlight ring" used to live here, always drawn
     // regardless of search state. Replaced by the boundary-box effect further down, which
     // tracks whatever region is actually searched and draws nothing until then.)
 
     // ── Render loop ───────────────────────────────────────────────────────
+    let lastTime = 0
     function animate() {
       rafRef.current = requestAnimationFrame(animate)
       const elapsed = clockRef.current.getElapsedTime()
+      const dt = elapsed - lastTime
+      lastTime = elapsed
 
       // Slow Earth rotation — only in Explorer Mode's cinematic flythrough (autoRotate=true).
-      // The Forecaster Console (autoRotate=false, the default) needs a STILL globe: a
-      // researcher searching a region and inspecting it doesn't want the ground moving
-      // under them a second later.
       if (earthRef.current && autoRotate) {
         earthRef.current.rotation.y = elapsed * 0.015
       }
+
+      // Animate eddy rings in OceanCubeLayer every frame
+      const cubeLayer = layerManagerRef.current?.getLayer('cube') as OceanCubeLayer | undefined
+      if (cubeLayer) cubeLayer.animate(Math.min(dt, 0.1))   // clamp dt to avoid spin jump on tab refocus
 
       controlsRef.current?.update()
       composer.render()
@@ -533,7 +539,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     // update() calls below. Without this, whichever layer last successfully fetched data stays
     // visible forever: switching render mode or unchecking a Layers checkbox only stopped that
     // layer from being *updated*, never hid what it had already rendered.
-    const ALL_LAYER_IDS = ['slice', 'volume', 'isosurface', 'markers', 'vectors', 'eddy', 'fronts'] as const
+    const ALL_LAYER_IDS = ['slice', 'volume', 'isosurface', 'cube', 'markers', 'vectors', 'eddy', 'fronts'] as const
     const activeLayerIds = new Set<string>()
 
     // store.setActiveSource() clears activeVar synchronously so it can never name a variable
@@ -550,6 +556,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     if (layerVisibility['slice']      && renderMode === 'slice')      activeLayerIds.add('slice')
     if (layerVisibility['volume']     && renderMode === 'volume')     activeLayerIds.add('volume')
     if (layerVisibility['isosurface'] && renderMode === 'isosurface') activeLayerIds.add('isosurface')
+    if (layerVisibility['cube']       && renderMode === 'cube')       activeLayerIds.add('cube')
     if (layerVisibility['markers'])  activeLayerIds.add('markers')
     if (layerVisibility['vectors'])  activeLayerIds.add('vectors')
     if (layerVisibility['eddy'])     activeLayerIds.add('eddy')
@@ -614,6 +621,18 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     if (activeLayerIds.has('fronts')) {
       const layer = layerManager.getLayer('fronts')
       if (layer) pending.push(layer.update({ source: activeSourceId, variable: activeVar, bbox, timeIdx: activeTimeIdx }))
+    }
+
+    if (activeLayerIds.has('cube')) {
+      const layer = layerManager.getLayer('cube')
+      if (layer) {
+        pending.push(layer.update({
+          source: activeSourceId, variable: activeVar,
+          timeIdx: activeTimeIdx, bbox,
+          clim: [colormap.min, colormap.max],
+          opacity: colormap.opacity,
+        }))
+      }
     }
 
     if (pending.length > 0) {

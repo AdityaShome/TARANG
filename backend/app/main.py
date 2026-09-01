@@ -378,7 +378,6 @@ app.include_router(
 # Option B — WMS/WCS
 # ─────────────────────────────────────────────────────────────────────────────
 
-if os.getenv(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(metadata.router,          prefix="/api")
 app.include_router(slice_.router,            prefix="/api")
