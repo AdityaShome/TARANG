@@ -52,5 +52,7 @@ async def get_volume(
         resp = make_binary_response(header, result.data)
         return resp.body
 
-    raw = await cache.get_or_compute(key, TTL_VOLUME, compute)
+    raw = await cache.get_or_compute(key, TTL_VOLUME, compute, metric={
+        "kind": "volume", "source": source, "var": var, "bbox": bbox,
+    })
     return Response(content=raw, media_type="application/octet-stream")

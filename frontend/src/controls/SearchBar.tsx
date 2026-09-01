@@ -1,7 +1,26 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useTarangStore } from '../state/store'
 import { geocodeRegion, GeocodeResult } from '../api/geocode'
+import { fetchLastUpdated } from '../api/client'
+import type { LastUpdatedEntry } from '../api/types'
 import { useT } from '../i18n/useT'
+
+// bbox as sent to the backend (see api/client.ts's bboxStr) — used to match a LastUpdatedEntry
+// to the currently-selected region/source/var without needing the backend to echo it back.
+function bboxKeyStr(bbox: [number, number, number, number]): string {
+  return bbox.join(',')
+}
+
+function timeAgo(unixSeconds: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds))
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
 
 /**
  * SearchBar — lets a researcher search for any sea/region by name instead of being
@@ -16,14 +35,31 @@ export function SearchBar() {
   const isFetchingLayers = useTarangStore(s => s.isFetchingLayers)
   const mapSelectMode    = useTarangStore(s => s.mapSelectMode)
   const setMapSelectMode = useTarangStore(s => s.setMapSelectMode)
+  const bbox             = useTarangStore(s => s.bbox)
+  const activeSourceId   = useTarangStore(s => s.activeSourceId)
+  const activeVar        = useTarangStore(s => s.activeVar)
 
   const [query, setQuery]       = useState('')
   const [results, setResults]   = useState<GeocodeResult[]>([])
   const [isSearching, setSearching] = useState(false)
   const [error, setError]       = useState<string | null>(null)
   const [showResults, setShowResults] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<LastUpdatedEntry[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const t = useT()
+
+  // Refresh cache-status metrics whenever a fetch finishes (isFetchingLayers flips false→true→false)
+  // and once on mount, so "last updated" is accurate right when the loading spinner disappears.
+  useEffect(() => {
+    if (isFetchingLayers) return
+    const controller = new AbortController()
+    fetchLastUpdated(controller.signal).then(setLastUpdated).catch(() => {})
+    return () => controller.abort()
+  }, [isFetchingLayers, bbox, activeSourceId, activeVar])
+
+  const currentEntry = lastUpdated.find(
+    e => e.source === activeSourceId && e.var === activeVar && e.bbox === bboxKeyStr(bbox)
+  )
 
   async function runSearch() {
     if (!query.trim()) return
@@ -105,6 +141,17 @@ export function SearchBar() {
       {isFetchingLayers && (
         <div style={styles.fetching}>
           ⏳ {t('fetchingData')}
+          {currentEntry && (
+            <span style={styles.lastUpdatedInline}>
+              {' '}(previously updated {timeAgo(currentEntry.updated_at)})
+            </span>
+          )}
+        </div>
+      )}
+      {!isFetchingLayers && currentEntry && (
+        <div style={styles.lastUpdated} title={`${currentEntry.duration_ms}ms · ${currentEntry.cache_hit ? 'served from cache' : 'freshly fetched'}`}>
+          🕒 Last updated {timeAgo(currentEntry.updated_at)}
+          {currentEntry.cache_hit ? ' (cached)' : ''}
         </div>
       )}
       {error && <div style={styles.error}>{error}</div>}
@@ -152,6 +199,8 @@ const styles: Record<string, React.CSSProperties> = {
   currentRegion: { fontSize: '11px', color: 'rgba(160, 196, 232, 0.7)' },
   noRegion: { fontSize: '11px', color: 'rgba(160, 196, 232, 0.5)', fontStyle: 'italic' },
   fetching: { fontSize: '11px', color: '#00d4ff', lineHeight: '1.4' },
+  lastUpdatedInline: { color: 'rgba(0, 212, 255, 0.6)', fontStyle: 'italic' },
+  lastUpdated: { fontSize: '11px', color: 'rgba(160, 196, 232, 0.6)' },
   error: { fontSize: '11px', color: '#ff6b6b' },
   resultsList: {
     position: 'absolute', top: '36px', left: 0, right: 0, zIndex: 200,

@@ -127,5 +127,7 @@ async def get_isosurface(
         }
         return _build_isosurface_binary(verts, faces, normals, header)
 
-    raw = await cache.get_or_compute(key, TTL_ISOSURFACE, compute)
+    raw = await cache.get_or_compute(key, TTL_ISOSURFACE, compute, metric={
+        "kind": "isosurface", "source": source, "var": var, "bbox": bbox,
+    })
     return Response(content=raw, media_type="application/octet-stream")

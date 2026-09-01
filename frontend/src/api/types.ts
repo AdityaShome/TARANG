@@ -148,6 +148,18 @@ export interface ParsedIsosurface {
   faces:   Uint32Array
 }
 
+// ── Cache/last-updated metrics ────────────────────────────────────────────────
+export interface LastUpdatedEntry {
+  key:         string
+  kind:        'slice' | 'volume' | 'isosurface'
+  source:      string
+  var:         string
+  bbox:        string
+  cache_hit:   boolean
+  duration_ms: number
+  updated_at:  number   // unix seconds
+}
+
 // ── Registry / source list ────────────────────────────────────────────────────
 export interface SourceEntry {
   id:          string

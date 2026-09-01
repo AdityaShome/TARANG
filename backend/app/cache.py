@@ -20,7 +20,9 @@ TTLs:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from typing import Any, Callable, Awaitable
 
 import redis.asyncio as aioredis
@@ -32,12 +34,20 @@ TTL_VOLUME     = 600
 TTL_ISOSURFACE = 120
 TTL_METADATA   = 3600
 
+# Hash holding "last updated" metrics for every region/source/var combination ever fetched.
+# Unlike the data caches above (which expire in minutes), entries here persist indefinitely so
+# the frontend can show "last updated" even for a region whose data cache has since expired.
+METRICS_HASH = "tarang:metrics:last_updated"
+
 
 class RedisCache:
 
     def __init__(self, redis_url: str):
         self._url = redis_url
         self._client: aioredis.Redis | None = None
+        # In-memory fallback so metrics still work when Redis is down/unset — same reasoning
+        # as the rest of this class degrading gracefully rather than failing requests.
+        self._metrics_mem: dict[str, dict] = {}
 
     async def connect(self) -> None:
         if not self._url:
@@ -80,22 +90,55 @@ class RedisCache:
         key: str,
         ttl: int,
         compute_fn: Callable[[], Awaitable[bytes]],
+        metric: dict | None = None,
     ) -> bytes:
         """
         Cache-aside pattern:
           1. Check Redis for key
           2. On miss: call compute_fn(), cache result, return it
           3. On hit: return cached bytes directly
+
+        If `metric` is given (e.g. {"kind": "slice", "source": ..., "var": ..., "bbox": ...}),
+        records a "last updated" entry for it — see record_metric().
         """
+        start = time.monotonic()
         cached = await self.get_bytes(key)
         if cached is not None:
             logger.debug(f"Cache HIT: {key}")
+            if metric is not None:
+                await self.record_metric(key, metric, cache_hit=True, duration_ms=(time.monotonic() - start) * 1000)
             return cached
 
         logger.debug(f"Cache MISS: {key} — computing...")
         result = await compute_fn()
         await self.set_bytes(key, result, ttl)
+        if metric is not None:
+            await self.record_metric(key, metric, cache_hit=False, duration_ms=(time.monotonic() - start) * 1000)
         return result
+
+    async def record_metric(self, key: str, metric: dict, cache_hit: bool, duration_ms: float) -> None:
+        """Record when a region/source/var was last fetched, for the frontend's cache-status panel."""
+        entry = {**metric, "key": key, "cache_hit": cache_hit, "duration_ms": round(duration_ms, 1), "updated_at": time.time()}
+        self._metrics_mem[key] = entry
+        if not self._client:
+            return
+        try:
+            await self._client.hset(METRICS_HASH, key, json.dumps(entry))
+        except Exception as e:
+            logger.warning(f"Redis metric record failed for '{key}': {e}")
+
+    async def get_all_metrics(self) -> list[dict]:
+        """All recorded 'last updated' entries, newest first."""
+        entries: dict[str, dict] = dict(self._metrics_mem)
+        if self._client:
+            try:
+                raw = await self._client.hgetall(METRICS_HASH)
+                for k, v in raw.items():
+                    key = k.decode() if isinstance(k, bytes) else k
+                    entries[key] = json.loads(v)
+            except Exception as e:
+                logger.warning(f"Redis metrics fetch failed: {e}")
+        return sorted(entries.values(), key=lambda e: e["updated_at"], reverse=True)
 
     @staticmethod
     def bbox_to_str(bbox: tuple) -> str:

@@ -14,7 +14,7 @@
 
 import type {
   SourceMetadata, InstrumentsResponse, DepthProfile, SourceEntry,
-  ParsedSlice, ParsedVolume, ParsedIsosurface,
+  ParsedSlice, ParsedVolume, ParsedIsosurface, LastUpdatedEntry,
   SliceHeader, VolumeHeader, IsosurfaceHeader,
 } from './types'
 
@@ -190,6 +190,33 @@ export async function fetchInstruments(params: {
   const res = await fetch(url, { signal })
   if (!res.ok) throw new Error(`fetchInstruments failed: ${res.status}`)
   return res.json()
+}
+
+/** Coarse full-extent slice for a source/var — used to paint an instant placeholder gradient. */
+export async function fetchSlicePreview(params: {
+  source: string
+  var:    string
+  time:   number
+}, signal?: AbortSignal): Promise<ParsedSlice> {
+  const { source, var: variable, time } = params
+  const key = `preview:${source}:${variable}:${time}`
+
+  return dedupe(key, async () => {
+    const url = `${API_BASE}/slice/preview?source=${source}&var=${variable}&time=${time}`
+    const res = await fetch(url, { signal })
+    if (!res.ok) throw new Error(`fetchSlicePreview failed: ${res.status}`)
+    const buffer = await res.arrayBuffer()
+    const { header, data } = await parseBinaryResponse<SliceHeader>(buffer)
+    return { header, data } as ParsedSlice
+  })
+}
+
+/** "Last updated" bookkeeping for every region/source/var ever fetched — for the cache-status panel. */
+export async function fetchLastUpdated(signal?: AbortSignal): Promise<LastUpdatedEntry[]> {
+  const res = await fetch(`${API_BASE}/metrics/last-updated`, { signal })
+  if (!res.ok) throw new Error(`fetchLastUpdated failed: ${res.status}`)
+  const json = await res.json()
+  return json.entries as LastUpdatedEntry[]
 }
 
 /** Fetch a depth profile for a single platform, optionally comparing to a model source. */

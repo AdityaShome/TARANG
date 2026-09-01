@@ -37,24 +37,7 @@ from fastapi.responses import JSONResponse
 from backend.app.registry.loader import RegistryLoader
 from backend.app.cache import RedisCache
 from backend.app.db import Database
-
-from backend.app.endpoints import (
-    metadata,
-    slice_,
-    volume,
-    isosurface,
-    instruments,
-    profile,
-    eddy,
-    registry as registry_endpoint,
-    copilot,
-)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Logging
-# ─────────────────────────────────────────────────────────────────────────────
-
+from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile, eddy, metrics, preview, registry as registry_endpoint, copilot
 logger = logging.getLogger("tarang")
 
 logging.basicConfig(
@@ -396,10 +379,20 @@ app.include_router(
 # ─────────────────────────────────────────────────────────────────────────────
 
 if os.getenv(
-    "OPTION_B_MODE",
-    "false"
-).lower() == "true":
+# ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(metadata.router,          prefix="/api")
+app.include_router(slice_.router,            prefix="/api")
+app.include_router(volume.router,            prefix="/api")
+app.include_router(isosurface.router,        prefix="/api")
+app.include_router(instruments.router,       prefix="/api")
+app.include_router(profile.router,           prefix="/api")
+app.include_router(eddy.router,              prefix="/api")
+app.include_router(metrics.router,           prefix="/api")
+app.include_router(preview.router,           prefix="/api")
+app.include_router(registry_endpoint.router, prefix="/api")
 
+# Option B: hand-rolled OGC endpoints (only active when OPTION_B_MODE=true)
+if os.getenv("OPTION_B_MODE", "false").lower() == "true":
     from backend.app.wms_wcs import wms, wcs
 
     app.include_router(
