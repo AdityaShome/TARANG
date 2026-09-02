@@ -40,12 +40,15 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
     return () => controller.abort()
   }, [platformId, showDelta, activeSourceId, activeTimeIdx])
 
+  const hasChl = !!(profile?.chlorophyll && profile.chlorophyll.some(v => v != null))
+
   // Lazy-load Plotly to avoid blocking initial render
   useEffect(() => {
     if (!profile) return
     import('plotly.js-dist-min').then(Plotly => {
       const tempDiv  = document.getElementById('tarang-profile-temp')
       const salDiv   = document.getElementById('tarang-profile-sal')
+      const chlDiv   = document.getElementById('tarang-profile-chl')
       if (!tempDiv || !salDiv) return
 
       const commonLayout = {
@@ -109,15 +112,30 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
         ...commonLayout,
         xaxis: { ...commonLayout.xaxis, title: { text: `Salinity (${profile.units.salinity})` } },
       }, { displayModeBar: false, responsive: true })
+
+      // BGC floats carry a chlorophyll profile — show it as a third panel.
+      if (chlDiv && profile.chlorophyll) {
+        Plotly.newPlot(chlDiv, [{
+          x: profile.chlorophyll,
+          y: profile.depth,
+          type: 'scatter', mode: 'lines+markers',
+          line: { color: '#7cfc7c', width: 2 },
+          marker: { size: 4, color: '#7cfc7c' },
+          name: 'Obs',
+        }], {
+          ...commonLayout,
+          xaxis: { ...commonLayout.xaxis, title: { text: `Chlorophyll (${profile.units.chlorophyll ?? 'mg m-3'})` } },
+        }, { displayModeBar: false, responsive: true })
+      }
     })
-  }, [profile, showDelta])
+  }, [profile, showDelta, hasChl])
 
   return (
-    <div id="profile-popover" style={styles.container}>
+    <div id="profile-popover" style={{ ...styles.container, width: hasChl ? 700 : 520 }}>
       {/* Header */}
       <div style={styles.header}>
         <div>
-          <div style={styles.title}>Argo Float {platformId}</div>
+          <div style={styles.title}>{INSTRUMENT_LABEL[profile?.instrument_type ?? ''] ?? 'Instrument'} {platformId}</div>
           {profile && (
             <div style={styles.meta}>
               {profile.lat.toFixed(2)}°N, {profile.lon.toFixed(2)}°E
@@ -152,10 +170,16 @@ export function ProfilePopover({ platformId }: ProfilePopoverProps) {
         <div style={styles.charts}>
           <div id="tarang-profile-temp" style={styles.chart} />
           <div id="tarang-profile-sal"  style={styles.chart} />
+          {hasChl && <div id="tarang-profile-chl" style={styles.chart} />}
         </div>
       )}
     </div>
   )
+}
+
+const INSTRUMENT_LABEL: Record<string, string> = {
+  argo: 'Argo Float', glider: 'Glider', ctd: 'CTD Cast', bgc: 'BGC Float',
+  mooring: 'Mooring', adcp: 'ADCP',
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -169,9 +193,9 @@ const styles: Record<string, React.CSSProperties> = {
     border:         '1px solid rgba(0, 180, 255, 0.25)',
     borderRadius:   '14px',
     padding:        '20px',
-    // Must float above VolumeIsoWorkspace's modal (zIndex 200) — clicking a marker inside that
-    // panel still opens this same popover, per the PS's co-visualization requirement.
-    zIndex:         210,
+    // Must float above the VolumeIsoWorkspace modal and the 2D India map — clicking a marker in
+    // either still opens this same popover (the PS's co-visualization requirement).
+    zIndex:         1600,
     boxShadow:      '0 8px 48px rgba(0, 80, 180, 0.3)',
     fontFamily:     "'Inter', sans-serif",
   },

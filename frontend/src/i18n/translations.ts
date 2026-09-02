@@ -57,7 +57,7 @@ export const translations = {
     ta: 'பகுதி எதுவும் தேர்ந்தெடுக்கப்படவில்லை — கடல் தரவை ஏற்ற மேலே தேடுங்கள்.',
   },
   mapPickClick: {
-    en: 'Click on globe',
+    en: 'Click to pick',
     hi: 'ग्लोब पर क्लिक करें',
     bn: 'গ্লোবে ক্লিক করুন',
     te: 'గ్లోబ్‌పై క్లిక్ చేయండి',
@@ -71,14 +71,14 @@ export const translations = {
     ta: 'தேர்ந்தெடுக்க இழுக்கவும்',
   },
   mapPickClickHint: {
-    en: 'Click anywhere on the globe to load that region.',
+    en: 'Click anywhere on the map/globe to load that region.',
     hi: 'उस क्षेत्र को लोड करने के लिए ग्लोब पर कहीं भी क्लिक करें।',
     bn: 'সেই অঞ্চল লোড করতে গ্লোবের যেকোনো জায়গায় ক্লিক করুন।',
     te: 'ఆ ప్రాంతాన్ని లోడ్ చేయడానికి గ్లోబ్‌పై ఎక్కడైనా క్లిక్ చేయండి.',
     ta: 'அந்தப் பகுதியை ஏற்ற கோளத்தில் எங்கு வேண்டுமானாலும் கிளிக் செய்யவும்.',
   },
   mapPickDragHint: {
-    en: 'Drag a rectangle on the globe to select a custom region.',
+    en: 'Drag a rectangle to select a custom region.',
     hi: 'कस्टम क्षेत्र चुनने के लिए ग्लोब पर एक आयत खींचें।',
     bn: 'কাস্টম অঞ্চল নির্বাচন করতে গ্লোবে একটি আয়তক্ষেত্র টানুন।',
     te: 'అనుకూల ప్రాంతాన్ని ఎంచుకోవడానికి గ్లోబ్‌పై ఒక దీర్ఘచతురస్రాన్ని లాగండి.',

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { Layer, LayerParams } from '../LayerManager'
 import { fetchSlice } from '../../api/client'
+import { useTarangStore } from '../../state/store'
 
 // Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ exactly — same convention as every
 // other layer that places geometry on the globe surface.
@@ -19,9 +20,11 @@ function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 
 // Registry source this layer always reads from — vectors aren't picked via the main "Data
 // Source" dropdown (that's a single scalar variable at a time); like markers, this is an
 // independent overlay that's simply on or off via the "Vectors" layer checkbox.
-const VECTOR_SOURCE = 'hf_radar_currents'
-const U_VAR = 'current_u'
-const V_VAR = 'current_v'
+// Real Copernicus currents carry depth-resolved uo/vo (time, depth, lat, lon), so the arrows
+// follow the depth slider — a true 3D current field. Synthetic fixture is the offline fallback.
+const VECTOR_SOURCE = 'copernicus_currents'
+const U_VAR = 'uo'
+const V_VAR = 'vo'
 
 export class VectorLayer implements Layer {
   private group: THREE.Group | null = null
@@ -42,10 +45,15 @@ export class VectorLayer implements Layer {
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
+    // Resolve the depth-level index to metres the same way DepthSliceLayer does, so the
+    // vector field is sampled at the depth the user is currently viewing.
+    const depthLevels = useTarangStore.getState().depthLevels
+    const depth_m = depthLevels[params.depthIdx ?? 0] ?? 0
+
     try {
       const [uResult, vResult] = await Promise.all([
-        fetchSlice({ source: VECTOR_SOURCE, var: U_VAR, depth: 0, time: params.timeIdx, bbox: params.bbox }, signal),
-        fetchSlice({ source: VECTOR_SOURCE, var: V_VAR, depth: 0, time: params.timeIdx, bbox: params.bbox }, signal),
+        fetchSlice({ source: VECTOR_SOURCE, var: U_VAR, depth: depth_m, time: params.timeIdx, bbox: params.bbox }, signal),
+        fetchSlice({ source: VECTOR_SOURCE, var: V_VAR, depth: depth_m, time: params.timeIdx, bbox: params.bbox }, signal),
       ])
 
       if (this.mesh) {

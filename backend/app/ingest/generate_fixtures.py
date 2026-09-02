@@ -31,8 +31,10 @@ OUT_DIR = Path(os.getenv("DATA_DIR", "data")) / "netcdf"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Grid definition ───────────────────────────────────────────────────────────
-LON = np.linspace(80.0, 100.0, 81)   # 0.25° resolution
-LAT = np.linspace(5.0,  25.0,  81)
+# Covers India's full EEZ / northern Indian Ocean: Arabian Sea (west), Bay of Bengal
+# (east), Lakshadweep & Andaman seas. 58–100°E, 2–26°N at 0.25° resolution.
+LON = np.linspace(58.0, 100.0, 169)   # 0.25° resolution
+LAT = np.linspace(2.0,  26.0,  97)
 DEP = np.array([0, 5, 10, 20, 30, 50, 75, 100, 150, 200,
                 250, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 4000])
 N_TIME = 8   # 8 daily snapshots
@@ -57,12 +59,14 @@ def make_temperature() -> np.ndarray:
             # SST pattern: warm pool centre ~90°E, 15°N
             sst_base = 29.5
             sst_grad = (
-                - 0.04 * np.abs(LONS - 90)      # cooling away from centre lon
-                - 0.06 * np.abs(LATS - 15)      # cooling away from centre lat
+                - 0.03 * np.abs(LONS - 88)      # cooling away from centre lon
+                - 0.05 * np.abs(LATS - 13)      # cooling away from centre lat
                 + 0.15 * np.sin(2*np.pi * day_offset/30)  # 30-day oscillation
                 + 0.3  * np.random.randn(NLAT, NLON) * 0.05  # noise
+                # Arabian Sea summer upwelling: cool band hugging the Somali/Oman boundary
+                - 2.0 * np.exp(-((LONS - 57)**2) / 45.0) * np.clip((LATS - 6) / 16.0, 0, 1)
             )
-            sst = np.clip(sst_base + sst_grad, 26.0, 31.0)
+            sst = np.clip(sst_base + sst_grad, 25.0, 31.0)
 
             # Depth profile: mixed layer (0-50m) then sharp thermocline
             if depth <= 50:
@@ -79,11 +83,13 @@ def make_temperature() -> np.ndarray:
                 # Abyssal: 2-3°C
                 layer_temp = 2.5 + 0.5 * np.random.randn(NLAT, NLON) * 0.02
 
-            # Add mesoscale eddies (warm/cold core)
+            # Add mesoscale eddies (warm/cold core) — Bay of Bengal + Arabian Sea
             eddy_warm = 1.5 * np.exp(-((LONS-87)**2 + (LATS-18)**2)/25)
             eddy_cold = -1.2 * np.exp(-((LONS-93)**2 + (LATS-10)**2)/20)
+            eddy_as_warm = 1.3 * np.exp(-((LONS-64)**2 + (LATS-17)**2)/22)   # Great Whirl-type
+            eddy_as_cold = -1.1 * np.exp(-((LONS-68)**2 + (LATS-12)**2)/18)
             eddy_factor = np.exp(-depth / 150)  # eddies decay with depth
-            layer_temp = layer_temp + (eddy_warm + eddy_cold) * eddy_factor
+            layer_temp = layer_temp + (eddy_warm + eddy_cold + eddy_as_warm + eddy_as_cold) * eddy_factor
 
             T[ti, di] = np.clip(layer_temp, 1.0, 32.0)
 
@@ -102,6 +108,7 @@ def make_salinity() -> np.ndarray:
                 - 2.5 * np.exp(-((LONS - 88)**2 + (LATS - 20)**2) / 30)   # Ganges-Brahmaputra plume
                 - 1.0 * np.exp(-((LONS - 80)**2 + (LATS - 11)**2) / 10)   # Sri Lanka coast
                 + 0.5 * np.exp(-((LONS - 95)**2 + (LATS - 15)**2) / 15)   # Andaman sea saltier
+                + 2.0 * np.exp(-((LONS - 64)**2 + (LATS - 18)**2) / 70)   # Arabian Sea high-salinity water (evaporation-driven)
             )
 
             if depth <= 100:
@@ -122,15 +129,24 @@ def make_currents() -> tuple[np.ndarray, np.ndarray]:
     U = np.zeros((N_TIME, NDEP, NLAT, NLON), dtype=np.float32)
     V = np.zeros((N_TIME, NDEP, NLAT, NLON), dtype=np.float32)
 
-    # Gyre centre ~90°E, 15°N; streamfunction ψ ∝ exp(-r²), (u,v) = (-∂ψ/∂y, ∂ψ/∂x)
+    # Bay of Bengal gyre centre ~90°E, 15°N; streamfunction ψ ∝ exp(-r²), (u,v) = (-∂ψ/∂y, ∂ψ/∂x)
     r2 = ((LONS - 90) ** 2 + (LATS - 15) ** 2) / 60.0
     psi = np.exp(-r2)
     u_surf = -(-2 * (LATS - 15) / 60.0) * psi        # -∂ψ/∂y
     v_surf = (-2 * (LONS - 90) / 60.0) * psi         #  ∂ψ/∂x
-    # Coastal jet along the western boundary (~80-82°E)
+
+    # Arabian Sea gyre centre ~65°E, 15°N (opposite rotation sense)
+    r2_as = ((LONS - 65) ** 2 + (LATS - 15) ** 2) / 55.0
+    psi_as = 0.9 * np.exp(-r2_as)
+    u_surf = u_surf + (2 * (LATS - 15) / 55.0) * psi_as
+    v_surf = v_surf - (2 * (LONS - 65) / 55.0) * psi_as
+
+    # East India Coastal Current along the western BoB boundary (~80-82°E)
     jet = 0.8 * np.exp(-((LONS - 81) ** 2) / 4.0) * np.clip((LATS - 6) / 12.0, 0, 1)
+    # West India Coastal Current along the eastern Arabian Sea boundary (~71-73°E)
+    wicc = 0.7 * np.exp(-((LONS - 72) ** 2) / 5.0) * np.clip((LATS - 8) / 14.0, 0, 1)
     u_surf = u_surf * 1.2
-    v_surf = (v_surf + jet) * 1.2
+    v_surf = (v_surf + jet - wicc) * 1.2
 
     for ti in range(N_TIME):
         phase = 1.0 + 0.1 * np.sin(2 * np.pi * ti / 30)
@@ -309,6 +325,22 @@ if __name__ == "__main__":
         "so", S,
         "Sea Water Salinity", "1e-3",
         valid_min=0.0, valid_max=50.0,
+    )
+
+    # Synthetic stand-in for copernicus_currents.nc under CMEMS' real variable names (uo/vo),
+    # so the currents source always has a file. download_copernicus.py overwrites this with
+    # real Copernicus data when run — same fallback pattern as temp/salinity above.
+    print("Generating Copernicus-labeled currents field (reuses HYCOM u/v above)...")
+    write_netcdf_multi(
+        OUT_DIR / "copernicus_currents.nc",
+        [
+            {"name": "uo", "data": U, "long_name": "Eastward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "eastward_sea_water_velocity",
+             "valid_min": -3.0, "valid_max": 3.0},
+            {"name": "vo", "data": V, "long_name": "Northward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "northward_sea_water_velocity",
+             "valid_min": -3.0, "valid_max": 3.0},
+        ],
     )
 
     print("\nDone! Fixture NetCDF files written successfully.")

@@ -29,10 +29,9 @@ export const REGION_MAX_SPAN_DEG = 90
 //   2. Fetchability — a novel (un-cached) 24deg box live-fetches fine; a 40deg one is ~2.7x the
 //      volume and times out at nginx's 120s proxy limit (502). Keeping picks near the verified-
 //      fetchable size means drag/click actually render data, not a spinner.
-// A click is already 24deg (PICK_SPAN_DEG*2); 26 gives drag a hair more room for a custom
-// aspect ratio without crossing into "should have used search" territory. Every primary sea in
-// REGION_CATALOG is <=20deg, so this covers real sea-sized picks.
-export const REGION_MAX_PICK_SPAN_DEG = 26
+// 40° lets a drag span the Arabian Sea + Bay of Bengal in one box (they're ~45° apart) while
+// still bounding a runaway drag. A click stays a fixed 24° box.
+export const REGION_MAX_PICK_SPAN_DEG = 40
 
 /**
  * Clamp a [minLon, minLat, maxLon, maxLat] box so each of its lon/lat spans lies within

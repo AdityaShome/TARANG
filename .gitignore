@@ -19,6 +19,9 @@ frontend/.vite/
 data/netcdf/
 data/zarr/
 data/argo/
+data/glider/
+data/ctd/
+data/bgc/
 # Keep fixture for CI
 !data/fixture/
 

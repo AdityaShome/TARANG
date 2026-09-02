@@ -47,6 +47,14 @@ function loadStoredLanguage(): LanguageCode {
 // value for `bbox`'s type until the researcher actually searches a region.
 const DEFAULT_BBOX: [number, number, number, number] = [80, 5, 100, 25]
 
+// Camera framing per view scope (lat/lon centre + distance as a multiple of EARTH_RADIUS).
+// India: the Arabian Sea + Bay of Bengal basins in one frame, a touch wider than the EEZ so it
+// doesn't look clipped. Globe: the wide Indian-Ocean view the app has always opened on.
+export const VIEW_SCOPE_PRESETS = {
+  india: { lat: 11, lon: 77, distanceMult: 1.95 },
+  globe: { lat: 5,  lon: 65, distanceMult: 4.0 },
+} as const
+
 const DEFAULT_COLORMAP: ColormapConfig = {
   name:                 'viridis',
   min:                  0,
@@ -91,8 +99,20 @@ interface TarangState {
   // Region search: display label, one-shot camera fly-to (SceneManager clears it), and a
   // gate — no data layer renders until a region has been searched.
   regionLabel:       string | null
-  flyToTarget:       { lat: number; lon: number } | null
+  // distanceMult (× EARTH_RADIUS) is optional: a region search omits it (keep current zoom),
+  // a view-scope switch sets it (India = close, Globe = wide).
+  flyToTarget:       { lat: number; lon: number; distanceMult?: number } | null
   hasSearchedRegion: boolean
+
+  // 'india' (default) frames the camera on the India ocean basin (~60-100°E, 0-25°N) — the
+  // primary demo experience; 'globe' is the unrestricted rotating view. Toggling only reframes
+  // the camera — the searched region, data and markers are all preserved.
+  viewScope: 'india' | 'globe'
+
+  // Set by DepthSliceLayer when a region's slice fetch comes back empty/degenerate (offline +
+  // no cached data for that bbox) — the layer hides itself and the UI shows a clear message
+  // instead of leaving the previous region's overlay on screen.
+  regionDataMissing: boolean
 
   // Pick-a-region-on-the-globe: 'off' (normal orbit/click-marker behaviour), 'click' (next
   // click on the globe surface becomes a fixed-size region centred there), 'drag' (drag out a
@@ -117,6 +137,8 @@ interface TarangState {
   setBbox:             (bbox: [number, number, number, number]) => void
   searchRegion:        (bbox: [number, number, number, number], label: string) => void
   clearFlyToTarget:    () => void
+  setViewScope:        (scope: 'india' | 'globe') => void
+  setRegionDataMissing: (v: boolean) => void
   setMapSelectMode:    (mode: 'off' | 'click' | 'drag') => void
   setDepthLevels:      (levels: number[])      => void
   setTimeSteps:        (steps: string[])       => void
@@ -165,6 +187,8 @@ export const useTarangStore = create<TarangState>()(
     regionLabel:         null,
     flyToTarget:         null,
     hasSearchedRegion:   false,
+    viewScope:           'india',
+    regionDataMissing:   false,
     mapSelectMode:       'off',
 
     selectedPlatformId:  null,
@@ -213,11 +237,17 @@ export const useTarangStore = create<TarangState>()(
         hasSearchedRegion: true,
         flyToTarget: { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 },
         mapSelectMode: 'off',
+        regionDataMissing: false,   // re-evaluated by DepthSliceLayer on the new fetch
         activeDepthIdx: 0,
         activeTimeIdx: 0,
       })
     },
     clearFlyToTarget:    () => set({ flyToTarget: null }),
+    // Swaps the whole view (2D India map ⇄ 3D globe). The searched region / data / markers are
+    // all preserved in the store, so each view just re-renders them — a toggle is a deliberate
+    // choice, not a reset.
+    setViewScope:        (scope) => set({ viewScope: scope }),
+    setRegionDataMissing: (v) => set({ regionDataMissing: v }),
     setMapSelectMode:    (mode) => set({ mapSelectMode: mode }),
     setDepthLevels:      (levels)  => set({ depthLevels: levels }),
     setTimeSteps:        (steps)   => set({ timeSteps: steps }),

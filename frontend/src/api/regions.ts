@@ -32,9 +32,9 @@ export const REGION_CATALOG: CatalogRegion[] = [
 
   // ── Primary seas ─────────────────────────────────────────────────────────
   { name: 'Bay of Bengal', aliases: ['bob'], bbox: [80, 5, 100, 22], hasModelData: true },
-  { name: 'Arabian Sea', bbox: [55, 5, 75, 25], hasModelData: true },
+  { name: 'Arabian Sea', bbox: [58, 5, 76, 25], hasModelData: true },
   { name: 'Andaman Sea', bbox: [92, 6, 99, 16], hasModelData: true },
-  { name: 'Laccadive Sea', aliases: ['lakshadweep sea'], bbox: [71, 6, 78, 14] },
+  { name: 'Laccadive Sea', aliases: ['lakshadweep sea'], bbox: [71, 6, 78, 14], hasModelData: true },
   { name: 'Indian Ocean', bbox: [45, -15, 100, 25] },
   { name: 'North Indian Ocean', bbox: [55, 0, 95, 25] },
   { name: 'Equatorial Indian Ocean', bbox: [55, -8, 95, 6] },
@@ -42,33 +42,33 @@ export const REGION_CATALOG: CatalogRegion[] = [
   // ── Gulfs, straits, bays ─────────────────────────────────────────────────
   { name: 'Gulf of Mannar', bbox: [78, 7.5, 80, 10], hasModelData: true },
   { name: 'Palk Strait', aliases: ['palk bay'], bbox: [79, 9, 80.5, 10.6], hasModelData: true },
-  { name: 'Gulf of Khambhat', aliases: ['gulf of cambay'], bbox: [71.5, 20, 73, 22.5] },
-  { name: 'Gulf of Kutch', aliases: ['gulf of kachchh'], bbox: [68.3, 22, 70.5, 23.6] },
+  { name: 'Gulf of Khambhat', aliases: ['gulf of cambay'], bbox: [71.5, 20, 73, 22.5], hasModelData: true },
+  { name: 'Gulf of Kutch', aliases: ['gulf of kachchh'], bbox: [68.3, 22, 70.5, 23.6], hasModelData: true },
   { name: 'Sundarbans', aliases: ['bengal delta', 'ganges delta'], bbox: [87, 20.5, 90, 22.5], hasModelData: true },
-  { name: 'Lakshadweep', aliases: ['lakshadweep islands'], bbox: [71, 8, 74.5, 12.5] },
+  { name: 'Lakshadweep', aliases: ['lakshadweep islands'], bbox: [71, 8, 74.5, 12.5], hasModelData: true },
   { name: 'Andaman and Nicobar Islands', aliases: ['andaman islands', 'nicobar islands'], bbox: [91.5, 6, 94.5, 14], hasModelData: true },
 
   // ── Coastal stretches ───────────────────────────────────────────────────
-  { name: 'Gujarat coast', bbox: [68, 19.5, 73, 23.5] },
-  { name: 'Konkan coast', bbox: [72.3, 15, 74, 18.5] },
-  { name: 'Malabar coast', bbox: [74.3, 8, 76.5, 13] },
-  { name: 'Kerala coast', bbox: [74.5, 8, 77.5, 13] },
+  { name: 'Gujarat coast', bbox: [68, 19.5, 73, 23.5], hasModelData: true },
+  { name: 'Konkan coast', bbox: [72.3, 15, 74, 18.5], hasModelData: true },
+  { name: 'Malabar coast', bbox: [74.3, 8, 76.5, 13], hasModelData: true },
+  { name: 'Kerala coast', bbox: [74.5, 8, 77.5, 13], hasModelData: true },
   { name: 'Coromandel coast', aliases: ['tamil nadu coast'], bbox: [79, 8, 81.5, 14], hasModelData: true },
   { name: 'Andhra Pradesh coast', bbox: [80, 13.5, 85, 19.5], hasModelData: true },
   { name: 'Odisha coast', bbox: [85, 17.5, 88, 21.5], hasModelData: true },
   { name: 'West Bengal coast', bbox: [86.5, 20, 89, 22], hasModelData: true },
 
   // ── Coastal cities / ports ──────────────────────────────────────────────
-  { name: 'Mumbai coast', aliases: ['bombay'], bbox: [71.8, 18, 73.2, 19.6] },
-  { name: 'Goa coast', bbox: [73, 14.7, 74.3, 15.9] },
-  { name: 'Kochi', aliases: ['cochin'], bbox: [75.2, 9.3, 76.4, 10.4] },
+  { name: 'Mumbai coast', aliases: ['bombay'], bbox: [71.8, 18, 73.2, 19.6], hasModelData: true },
+  { name: 'Goa coast', bbox: [73, 14.7, 74.3, 15.9], hasModelData: true },
+  { name: 'Kochi', aliases: ['cochin'], bbox: [75.2, 9.3, 76.4, 10.4], hasModelData: true },
   { name: 'Chennai', aliases: ['madras'], bbox: [79.8, 12.4, 81.2, 13.6], hasModelData: true },
   { name: 'Visakhapatnam', aliases: ['vizag'], bbox: [82.8, 17, 84.2, 18.4], hasModelData: true },
   { name: 'Paradip', bbox: [86, 19.5, 87.3, 20.7], hasModelData: true },
   { name: 'Puducherry', aliases: ['pondicherry'], bbox: [79.4, 11.3, 80.4, 12.3], hasModelData: true },
   { name: 'Kolkata', aliases: ['calcutta'], bbox: [87.5, 20.5, 89, 22.3], hasModelData: true },
   { name: 'Port Blair', bbox: [92.4, 11, 93.2, 12], hasModelData: true },
-  { name: 'Kanyakumari', aliases: ['cape comorin'], bbox: [77, 7.5, 78.3, 8.6] },
+  { name: 'Kanyakumari', aliases: ['cape comorin'], bbox: [77, 7.5, 78.3, 8.6], hasModelData: true },
 ]
 
 /** Case-insensitive substring match over region names + aliases. */

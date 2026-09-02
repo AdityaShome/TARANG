@@ -105,6 +105,7 @@ export interface InstrumentsResponse {
 // ── Profile endpoint ──────────────────────────────────────────────────────────
 export interface DepthProfile {
   platform_id: string
+  instrument_type?: string | null   // argo | glider | ctd | bgc | mooring | adcp
   lat:         number
   lon:         number
   time:        string | null
@@ -115,10 +116,12 @@ export interface DepthProfile {
   salinity:    number[]
   model_salinity?: number[] | null
   delta_salinity?: number[] | null
+  chlorophyll?: number[] | null     // BGC floats only
   units: {
     depth:       string
     temperature: string
     salinity:    string
+    chlorophyll?: string
   }
 }
 
@@ -127,6 +130,7 @@ export interface EddyCell {
   lon: number
   type: 'warm' | 'cold' | 'front'
   w_value: number
+  radius_km?: number   // eddy blob extent (centroid-clustered)
 }
 
 export interface FrontCell {

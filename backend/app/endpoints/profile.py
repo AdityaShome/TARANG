@@ -61,6 +61,17 @@ async def get_profile(
     loop = asyncio.get_running_loop()
     registry = request.app.state.registry
 
+    # Instrument type (argo / glider / ctd / bgc / mooring / adcp) from PostGIS, so the UI can
+    # label the popover correctly instead of always saying "Argo Float".
+    db = getattr(request.app.state, "db", None)
+    inst_type = None
+    if db is not None:
+        try:
+            meta = await db.get_profile_meta(platform_id)
+            inst_type = meta.get("type") if meta else None
+        except Exception as e:
+            logger.debug(f"instrument-type lookup failed for {platform_id}: {e}")
+
     def fetch_profile():
         # Try every local cache file (data/argo/*.nc + data/glider/*.nc) — no fixed
         # platform_id→file mapping, and _load_from_local_cache resolves either shape.
@@ -71,6 +82,8 @@ async def get_profile(
         cache_files = sorted(
             glob.glob(os.path.join(data_dir, "argo", "*.nc"))
             + glob.glob(os.path.join(data_dir, "glider", "*.nc"))
+            + glob.glob(os.path.join(data_dir, "ctd", "*.nc"))
+            + glob.glob(os.path.join(data_dir, "bgc", "*.nc"))
         )
 
         profile = None
@@ -143,6 +156,9 @@ async def get_profile(
             content={"error": f"Profile not found for platform {platform_id}: {str(e)}"}
         )
 
+    if isinstance(profile_data, dict):
+        profile_data["instrument_type"] = inst_type or profile_data.get("instrument_type")
+
     return JSONResponse(content=profile_data)
 
 
@@ -172,6 +188,7 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
     col_pres     = _col("pres", "PRES", "pressure", "depth", "DEPTH")
     col_temp     = _col("temp", "TEMP", "temperature", "TEMPERATURE")
     col_psal     = _col("psal", "PSAL", "salinity", "SALINITY")
+    col_chl      = _col("chlorophyll", "CHLA", "chla", "CHLOROPHYLL", "chl_a", "chla_adjusted")
     col_lat      = _col("latitude", "LATITUDE")
     col_lon      = _col("longitude", "LONGITUDE")
     col_time     = _col("time", "TIME", "JULD")
@@ -205,7 +222,7 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
     lon  = float(sub[col_lon].values.flat[0])  if col_lon  else 0.0
     time = str(sub[col_time].values.flat[0])   if col_time else None
 
-    return {
+    result = {
         "platform_id": platform_id,
         "lat": lat,
         "lon": lon,
@@ -219,6 +236,10 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
             "salinity":    "psu",
         }
     }
+    if col_chl is not None:
+        result["chlorophyll"] = _values(col_chl)
+        result["units"]["chlorophyll"] = "mg m-3"
+    return result
 
 
 def _load_from_argopy(platform_id: str) -> dict:

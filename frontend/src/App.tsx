@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useTarangStore } from './state/store'
 import { fetchSources, fetchMetadata } from './api/client'
+import { prewarmIndiaRegion } from './api/prewarm'
 import { ForecasterConsole } from './modes/ForecasterConsole'
 import { ExplorerMode } from './modes/ExplorerMode'
 import './index.css'
@@ -49,7 +50,14 @@ export default function App() {
 
         // Feed the variable dropdown; setActiveVar seeds the colour range from CF metadata.
         setVariableMeta(meta.available_variables, meta.cf_metadata)
-        if (meta.available_variables[0]) setActiveVar(meta.available_variables[0])
+        const initialVar = meta.available_variables[0]
+        if (initialVar) {
+          setActiveVar(initialVar)
+          // India is the default scope — warm its region so click/drag picks are fast.
+          if (useTarangStore.getState().viewScope === 'india') {
+            prewarmIndiaRegion(activeSourceId, initialVar)
+          }
+        }
       } catch (e: unknown) {
         if ((e as Error).name !== 'AbortError') {
           setError(`Failed to connect to backend: ${(e as Error).message}`)

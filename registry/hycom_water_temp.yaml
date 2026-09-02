@@ -68,4 +68,4 @@ depth_levels:
   - 5000
 
 # Demo region defaults
-default_bbox: [80, 5, 100, 25]    # [minLon, minLat, maxLon, maxLat] — Bay of Bengal
+default_bbox: [58, 2, 100, 26]    # [minLon, minLat, maxLon, maxLat] — Bay of Bengal

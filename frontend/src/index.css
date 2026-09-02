@@ -69,3 +69,12 @@ button { font-family: var(--font-main); }
 @keyframes tarang-spin {
   to { transform: rotate(360deg); }
 }
+
+/* India 2D map — deep-ocean background instead of Leaflet's default light grey */
+.leaflet-container { background: #04121f; }
+.leaflet-container .leaflet-control-zoom a {
+  background: rgba(8, 20, 36, 0.9);
+  color: #9fc7e8;
+  border-color: rgba(0, 180, 255, 0.25);
+}
+.leaflet-container .leaflet-control-zoom a:hover { background: rgba(0, 60, 100, 0.9); }

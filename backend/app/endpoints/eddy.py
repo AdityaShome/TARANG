@@ -14,13 +14,32 @@ from backend.app.endpoints.binary import parse_bbox
 logger = logging.getLogger("tarang.endpoint.eddy")
 router = APIRouter(tags=["analytics"])
 
+# Common (eastward, northward) sea-water-velocity variable-name pairs across the datasets this
+# app ingests: HYCOM (water_u/water_v), HF-radar fixture (current_u/current_v), Copernicus
+# (uo/vo), CF standard names, and bare u/v.
+_UV_PAIRS = [
+    ("water_u", "water_v"),
+    ("current_u", "current_v"),
+    ("uo", "vo"),
+    ("eastward_sea_water_velocity", "northward_sea_water_velocity"),
+    ("u", "v"),
+]
+
+
+def _find_uv(data_vars) -> tuple[str, str] | None:
+    names = set(data_vars)
+    for u, v in _UV_PAIRS:
+        if u in names and v in names:
+            return u, v
+    return None
+
 @router.get("/eddy")
 async def get_eddy(
     request: Request,
     source: str = Query(..., description="Registry source ID"),
     time: int = Query(0, description="Time step index (0-based)"),
     bbox: str = Query("80,5,100,25", description="minLon,minLat,maxLon,maxLat"),
-    threshold: float = Query(2e-11, description="Okubo-Weiss parameter threshold"),
+    threshold: float | None = Query(None, description="Okubo-Weiss threshold (auto-scaled if omitted)"),
 ):
     registry = request.app.state.registry
     try:
@@ -46,20 +65,26 @@ async def get_eddy(
         })
         
         if "time" in subset.dims:
-            subset = subset.isel(time=time)
+            subset = subset.isel(time=min(time, subset.sizes["time"] - 1))
             
         if "depth" in subset.dims or "lev" in subset.dims:
             depth_dim = "depth" if "depth" in subset.dims else "lev"
             subset = subset.isel(**{depth_dim: 0})
 
-        if "water_u" not in subset.data_vars or "water_v" not in subset.data_vars:
-            raise ValueError(f"Source '{source}' is missing water_u or water_v")
+        uv = _find_uv(subset.data_vars)
+        if uv is None:
+            raise ValueError(
+                f"Source '{source}' has no current-velocity variables "
+                f"(need one of {[p[0] for p in _UV_PAIRS]}) — pick a currents source for eddies"
+            )
+        u = subset[uv[0]].values.astype(np.float64)
+        v = subset[uv[1]].values.astype(np.float64)
 
-        u = subset["water_u"].values.astype(np.float64)
-        v = subset["water_v"].values.astype(np.float64)
-        
         lats = subset[lat_dim].values.astype(np.float64)
         lons = subset[lon_dim].values.astype(np.float64)
+
+        if lats.size < 3 or lons.size < 3:
+            return []   # this source doesn't cover the requested bbox — no eddies, not an error
         
         dy = np.gradient(lats) * 111320.0
         dx = np.gradient(lons) * 111320.0
@@ -83,20 +108,55 @@ async def get_eddy(
         omega = dv_dx - du_dy
         
         W = s_n**2 + s_s**2 - omega**2
-        
-        cells = []
-        eddy_mask = (W < -threshold) & ~np.isnan(W)
-        front_mask = (W > threshold) & ~np.isnan(W)
-        
-        for i in range(len(lats)):
-            for j in range(len(lons)):
-                if eddy_mask[i, j]:
-                    etype = "warm" if omega[i, j] < 0 else "cold"
-                    cells.append({"lat": float(lats[i]), "lon": float(lons[j]), "type": etype, "w_value": float(W[i, j])})
-                elif front_mask[i, j]:
-                    cells.append({"lat": float(lats[i]), "lon": float(lons[j]), "type": "front", "w_value": float(W[i, j])})
-                    
-        return cells
+
+        # Okubo-Weiss < 0 marks rotation-dominated (eddy) water. Rather than threshold-and-blob
+        # (which merges into one map-spanning region on a smooth field), find LOCAL MINIMA of W
+        # — each is a distinct eddy core — that are also strongly negative.
+        try:
+            from scipy import ndimage
+        except Exception:
+            return []
+
+        Wf = ndimage.gaussian_filter(np.nan_to_num(W, nan=0.0), sigma=1.0)
+        Wneg = -Wf[Wf < 0]
+        if Wneg.size == 0:
+            return []
+        thr = threshold if (threshold and threshold > 0) else float(np.percentile(Wneg, 70))
+
+        win = 7
+        is_min = (Wf == ndimage.minimum_filter(Wf, size=win)) & (Wf < -thr)
+        ys, xs = np.where(is_min)
+
+        # Drop candidates hugging the subset edge — np.gradient is one-sided there, so W is
+        # unreliable and "eddies" pile up along the bbox border.
+        lat_lo, lat_hi = lats.min() + 0.75, lats.max() - 0.75
+        lon_lo, lon_hi = lons.min() + 0.75, lons.max() - 0.75
+
+        raw = []
+        for ci, cj in zip(ys.tolist(), xs.tolist()):
+            la, lo = float(lats[ci]), float(lons[cj])
+            if not (lat_lo <= la <= lat_hi and lon_lo <= lo <= lon_hi):
+                continue
+            rot = float(omega[ci, cj])
+            strength = float(-Wf[ci, cj]) / (thr + 1e-30)
+            raw.append({
+                "lat": la, "lon": lo,
+                "type": "warm" if rot < 0 else "cold",
+                "w_value": float(W[ci, cj]),
+                "radius_km": float(60 + 45 * np.tanh(strength / 6.0)),
+            })
+        raw.sort(key=lambda c: c["w_value"])   # strongest first
+
+        # Spatial non-max suppression: real (turbulent) current fields produce dozens of
+        # near-coincident minima that render as an unreadable pile of overlapping circles.
+        # Keep the strongest in any ~2° neighbourhood.
+        kept: list[dict] = []
+        for c in raw:
+            if all(abs(c["lat"] - k["lat"]) > 2.0 or abs(c["lon"] - k["lon"]) > 2.0 for k in kept):
+                kept.append(c)
+            if len(kept) >= 10:
+                break
+        return kept
 
     loop = asyncio.get_running_loop()
     try:
@@ -114,7 +174,7 @@ async def get_front(
     var: str = Query("water_temp", description="Variable name for gradient (water_temp or salinity)"),
     time: int = Query(0, description="Time step index (0-based)"),
     bbox: str = Query("80,5,100,25", description="minLon,minLat,maxLon,maxLat"),
-    threshold: float = Query(0.05, description="Gradient magnitude threshold"),
+    threshold: float | None = Query(None, description="Gradient threshold (auto-scaled if omitted)"),
 ):
     registry = request.app.state.registry
     try:
@@ -140,7 +200,7 @@ async def get_front(
         })
         
         if "time" in subset.dims:
-            subset = subset.isel(time=time)
+            subset = subset.isel(time=min(time, subset.sizes["time"] - 1))
             
         if "depth" in subset.dims or "lev" in subset.dims:
             depth_dim = "depth" if "depth" in subset.dims else "lev"
@@ -150,10 +210,13 @@ async def get_front(
             raise ValueError(f"Source '{source}' is missing variable '{var}'")
 
         data = subset[var].values.astype(np.float64)
-        
+
         lats = subset[lat_dim].values.astype(np.float64)
         lons = subset[lon_dim].values.astype(np.float64)
-        
+
+        if lats.size < 3 or lons.size < 3:
+            return []
+
         dy = np.gradient(lats) * 111320.0
         dx = np.gradient(lons) * 111320.0
         
@@ -165,9 +228,16 @@ async def get_front(
 
         grad_y, grad_x = np.gradient(data)
         grad_mag = np.sqrt((grad_x / dx_2d)**2 + (grad_y / dy_2d)**2)
-        
+
+        # Auto-scale to this field (see the eddy endpoint's note) — a fixed °C/m default is
+        # meaningless across datasets of different smoothness.
+        thr = threshold
+        if thr is None or thr <= 0:
+            finite = grad_mag[np.isfinite(grad_mag) & (grad_mag > 0)]
+            thr = float(np.percentile(finite, 97.5)) if finite.size else 0.0
+
         cells = []
-        mask = (grad_mag > threshold) & ~np.isnan(grad_mag)
+        mask = (grad_mag > thr) & ~np.isnan(grad_mag)
         
         for i in range(len(lats)):
             for j in range(len(lons)):

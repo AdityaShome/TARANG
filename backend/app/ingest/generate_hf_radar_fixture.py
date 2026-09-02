@@ -32,8 +32,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Coarser than the temperature/salinity grids on purpose — arrow glyphs need one sample point
 # per arrow, not one per pixel; a 0.083 deg grid would mean thousands of overlapping arrows.
-LON = np.linspace(80.0, 100.0, 21)   # ~1 deg spacing
-LAT = np.linspace(5.0,  25.0,  21)
+# Full India EEZ extent (Arabian Sea + Bay of Bengal), matching generate_fixtures.py.
+LON = np.linspace(58.0, 100.0, 43)   # ~1 deg spacing
+LAT = np.linspace(2.0,  26.0,  25)
 N_TIME = 8
 
 NLAT, NLON = len(LAT), len(LON)
@@ -69,8 +70,18 @@ def make_currents():
         u_gyre = -gyre_strength * dy / r
         v_gyre =  gyre_strength * dx / r
 
-        U[ti] = u_eicc + u_gyre
-        V[ti] = v_eicc + v_gyre
+        # Arabian Sea gyre + West India Coastal Current (opposite rotation sense to the BoB gyre)
+        axc, ayc = 65.0, 15.0
+        adx, ady = LONS - axc, LATS - ayc
+        ar = np.sqrt(adx**2 + ady**2) + 1e-6
+        as_strength = 0.18 * np.exp(-ar / 8.0)
+        u_as =  as_strength * ady / ar
+        v_as = -as_strength * adx / ar
+        wicc_decay = np.exp(-(LONS - 68.0) / 3.0)
+        v_wicc = -0.5 * eicc_strength * np.clip(wicc_decay, 0, 1)   # seasonally reversing, like the EICC
+
+        U[ti] = u_eicc + u_gyre + u_as
+        V[ti] = v_eicc + v_gyre + v_as + v_wicc
 
     return U, V
 
