@@ -215,7 +215,11 @@ def app_client(fixture_nc_path):
     class NoopCache:
         async def connect(self): pass
         async def close(self): pass
-        async def get_or_compute(self, key, ttl, fn): return await fn()
+        # metric=... kwarg mirrors the real RedisCache.get_or_compute signature
+        # (added in db53db1 for the /metrics last-updated tracking). The no-op cache
+        # ignores it — it records no metrics — but must accept it or every
+        # slice/volume/isosurface endpoint call raises TypeError under test.
+        async def get_or_compute(self, key, ttl, fn, metric=None): return await fn()
         def metadata_key(self, s):    return f"meta:{s}"
         def slice_key(self, *a):      return "slice:test"
         def volume_key(self, *a):     return "volume:test"

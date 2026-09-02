@@ -363,6 +363,21 @@ app.include_router(
     prefix="/api"
 )
 
+app.include_router(
+    delta.router,
+    prefix="/api"
+)
+
+app.include_router(
+    metrics.router,
+    prefix="/api"
+)
+
+app.include_router(
+    preview.router,
+    prefix="/api"
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AI COPILOT ROUTER
@@ -377,19 +392,6 @@ app.include_router(
 # ─────────────────────────────────────────────────────────────────────────────
 # Option B — WMS/WCS
 # ─────────────────────────────────────────────────────────────────────────────
-
-# ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(metadata.router,          prefix="/api")
-app.include_router(slice_.router,            prefix="/api")
-app.include_router(volume.router,            prefix="/api")
-app.include_router(isosurface.router,        prefix="/api")
-app.include_router(instruments.router,       prefix="/api")
-app.include_router(profile.router,           prefix="/api")
-app.include_router(eddy.router,              prefix="/api")
-app.include_router(delta.router,             prefix="/api")
-app.include_router(metrics.router,           prefix="/api")
-app.include_router(preview.router,           prefix="/api")
-app.include_router(registry_endpoint.router, prefix="/api")
 
 # Option B: hand-rolled OGC endpoints (PS requirement)
 from backend.app.wms_wcs import wms, wcs

@@ -92,3 +92,8 @@ button { font-family: var(--font-main); }
   0% { opacity: 0; transform: translateY(40px) scale(0.95); filter: blur(10px); }
   100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0px); }
 }
+
+/* Spinner (VolumeIsoWorkspace loading state) */
+@keyframes tarang-spin {
+  to { transform: rotate(360deg); }
+}

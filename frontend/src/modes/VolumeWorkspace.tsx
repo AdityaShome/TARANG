@@ -6,7 +6,7 @@ import { fetchVolume } from '../api/client'
 import { computeDataRange } from '../scene/layers/dataStats'
 
 import vertShader from '../scene/shaders/workspaceVolumeVert.glsl?raw'
-import fragShader from '../scene/shaders/workspaceVolumeFrag.glsl?raw'
+import fragShader from '../scene/shaders/volumeWorkspaceLegacyFrag.glsl?raw'
 
 
 

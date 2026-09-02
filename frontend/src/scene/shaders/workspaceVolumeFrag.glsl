@@ -1,123 +1,97 @@
-// Fragment shader for Workspace Volume Raymarching
-// A simplified AABB raymarcher for a local box in [0, 1] space
-
 precision highp float;
 precision highp sampler3D;
 
-in vec3 vLocalPos;
 in vec3 vWorldPos;
 
 uniform sampler3D u_data;
+uniform mat4 u_worldToUnit;   // world → [0,1]^3 box space, ordered (lon, lat, depth)
 uniform vec2 u_clim;
-uniform float u_missing;
 uniform float u_opacity;
-uniform vec3 u_cameraPos;
+uniform float u_missing;
+uniform float u_colormap;     // 0=viridis 1=plasma 2=magma 3=inferno 4=jet
+uniform float u_log_scale;    // 0=linear 1=log
+uniform float u_lat_flip;     // 1 → data rows run north→south, mirror the lat axis
 
 layout(location = 0) out highp vec4 pc_fragColor;
 
-// Viridis colormap
+// Palette — kept in sync with volumeFrag_v2.glsl / colormapFrag.glsl.
 vec3 mix5(float t, vec3 c0, vec3 c1, vec3 c2, vec3 c3, vec3 c4) {
     t = clamp(t, 0.0, 1.0) * 4.0;
     float seg = floor(t);
     float f = t - seg;
-    if      (seg < 1.0) return mix(c0, c1, f);
+    if (seg < 1.0)      return mix(c0, c1, f);
     else if (seg < 2.0) return mix(c1, c2, f);
     else if (seg < 3.0) return mix(c2, c3, f);
     else                return mix(c3, c4, f);
 }
-vec3 viridis(float t) {
-    return mix5(t,
-        vec3(0.267,0.005,0.329), vec3(0.231,0.322,0.545),
-        vec3(0.128,0.567,0.551), vec3(0.369,0.789,0.383),
-        vec3(0.993,0.906,0.144));
+vec3 viridis(float t) { return mix5(t, vec3(0.267,0.005,0.329), vec3(0.231,0.322,0.545), vec3(0.128,0.567,0.551), vec3(0.369,0.789,0.383), vec3(0.993,0.906,0.144)); }
+vec3 plasma(float t)  { return mix5(t, vec3(0.051,0.031,0.529), vec3(0.494,0.012,0.658), vec3(0.799,0.279,0.471), vec3(0.973,0.585,0.255), vec3(0.940,0.975,0.131)); }
+vec3 magma(float t)   { return mix5(t, vec3(0.001,0.001,0.016), vec3(0.231,0.059,0.439), vec3(0.549,0.161,0.506), vec3(0.871,0.288,0.409), vec3(0.987,0.991,0.749)); }
+vec3 inferno(float t) { return mix5(t, vec3(0.001,0.001,0.016), vec3(0.259,0.039,0.408), vec3(0.576,0.149,0.404), vec3(0.867,0.318,0.227), vec3(0.988,1.000,0.643)); }
+vec3 jetMap(float t) {
+    t = clamp(t, 0.0, 1.0);
+    return vec3(
+        clamp(min(1.5 - abs(2.0*t - 1.5), 1.0), 0.0, 1.0),
+        clamp(min(1.5 - abs(2.0*t - 1.0), 1.0), 0.0, 1.0),
+        clamp(min(1.5 - abs(2.0*t - 0.5), 1.0), 0.0, 1.0));
+}
+vec3 safeColormap(float t) {
+    // else-if chain (not independent returns) — see the identical note in colormapFrag.glsl.
+    if (u_colormap < 0.5)      return viridis(t);
+    else if (u_colormap < 1.5) return plasma(t);
+    else if (u_colormap < 2.5) return magma(t);
+    else if (u_colormap < 3.5) return inferno(t);
+    else                       return jetMap(t);
+}
+float normalize_val(float val) {
+    if (u_log_scale > 0.5) {
+        float eps = 1e-3;
+        float sv = max(val - u_clim.x + eps, eps);
+        float sm = max(u_clim.y - u_clim.x + eps, eps * 2.0);
+        return clamp(log(sv) / log(sm), 0.0, 1.0);
+    }
+    return clamp((val - u_clim.x) / (u_clim.y - u_clim.x), 0.0, 1.0);
 }
 
-// AABB Intersection against unit box [0, 1]
-vec2 intersectAABB(vec3 rayOrigin, vec3 rayDir) {
-    vec3 boxMin = vec3(0.0);
-    vec3 boxMax = vec3(1.0);
-    vec3 tMin = (boxMin - rayOrigin) / rayDir;
-    vec3 tMax = (boxMax - rayOrigin) / rayDir;
-    vec3 t1 = min(tMin, tMax);
-    vec3 t2 = max(tMin, tMax);
-    float tNear = max(max(t1.x, t1.y), t1.z);
-    float tFar = min(min(t2.x, t2.y), t2.z);
-    return vec2(tNear, tFar);
+// Slab intersection against the unit box [0,1]^3 for ray ro + t*rd.
+vec2 hitBox(vec3 ro, vec3 rd) {
+    vec3 safeRd = mix(rd, vec3(1e-6), lessThan(abs(rd), vec3(1e-6)));
+    vec3 inv = 1.0 / safeRd;
+    vec3 t0s = (vec3(0.0) - ro) * inv;
+    vec3 t1s = (vec3(1.0) - ro) * inv;
+    vec3 tmin = min(t0s, t1s);
+    vec3 tmax = max(t0s, t1s);
+    return vec2(max(max(tmin.x, tmin.y), tmin.z),
+                min(min(tmax.x, tmax.y), tmax.z));
 }
 
 void main() {
-    // The geometry is a 1x1x1 box at [0,1], but we can just trace from the fragment
-    // Calculate ray direction in local space.
-    // To do this, we need the camera position in local space. Wait, it's easier to trace in world space?
-    // No, standard volume raymarching: camera pos and world pos are known.
-    // Instead of doing proper object-space ray intersection which requires `u_modelInv`,
-    // we can just use the fragment's local position as the entry point, and the ray direction
-    // as normalize(vLocalPos - cameraLocalPos). But wait, what if the camera is inside the box?
-    // For the workspace, the camera is always outside.
-    
-    // Actually, since we have vLocalPos and the camera position in local space (passed via uniform),
-    // the ray direction in local space is:
-    vec3 rayDir = normalize(vLocalPos - u_cameraPos);
-    
-    // We already know the ray entered the box at vLocalPos!
-    // We just need to find where it exits.
-    vec2 tHit = intersectAABB(u_cameraPos, rayDir);
-    
-    // tHit.x is entry, tHit.y is exit distance from camera
-    // Since we are at the front face, the distance from camera to here is exactly tHit.x (if outside).
-    // So we just march from vLocalPos to the exit point.
-    
-    float tStart = max(tHit.x, 0.0);
-    float tEnd = tHit.y;
-    
-    if (tEnd < tStart) {
-        discard; // missed box
-    }
-    
-    // Marching parameters
-    int maxSteps = 128; // high quality
-    float stepSize = (tEnd - tStart) / float(maxSteps);
-    vec3 stepVec = rayDir * stepSize;
-    
-    vec3 currentPos = u_cameraPos + rayDir * tStart;
-    // Add small jitter to prevent wood-grain artifacts
-    currentPos += stepVec * fract(sin(gl_FragCoord.x * 12.9898 + gl_FragCoord.y * 78.233) * 43758.5453);
-    
-    vec4 accum = vec4(0.0);
-    
-    for (int i = 0; i < maxSteps; i++) {
-        if (accum.a >= 0.99) break; // early exit
-        
-        // Sample texture
-        // uvw: x=lon, y=lat, z=depth (1=bottom, 0=top in raw data arrays usually)
-        // Note: the backend data arrays usually have depth 0 at the surface (index 0).
-        // Let's assume standard UVW:
-        float val = texture(u_data, currentPos).r;
-        
+    vec3 rdWorld = normalize(vWorldPos - cameraPosition);
+    vec3 ro = (u_worldToUnit * vec4(cameraPosition, 1.0)).xyz;
+    vec3 rd = (u_worldToUnit * vec4(rdWorld, 0.0)).xyz;
+
+    vec2 bounds = hitBox(ro, rd);
+    bounds.x = max(bounds.x, 0.0);
+    if (bounds.x >= bounds.y) discard;
+
+    const int STEPS = 256;
+    float dt = (bounds.y - bounds.x) / float(STEPS);
+
+    float maxValue = -1e20;
+    int validSamples = 0;
+
+    for (int i = 0; i < STEPS; i++) {
+        float t = bounds.x + (float(i) + 0.5) * dt;
+        vec3 uvw = clamp(ro + t * rd, 0.0, 1.0);
+        if (u_lat_flip > 0.5) uvw.y = 1.0 - uvw.y;
+        float val = texture(u_data, uvw).r;
         bool valid = (val == val) && (val != u_missing) && (val > -1.0e4) && (val < 1.0e4);
         if (valid) {
-            float norm = clamp((val - u_clim.x) / max(u_clim.y - u_clim.x, 1e-6), 0.0, 1.0);
-            vec3 color = viridis(norm);
-            float alpha = u_opacity * 0.05; // base density
-            
-            // Front-to-back alpha blending
-            // C = C + (1 - A) * alpha * color
-            // A = A + (1 - A) * alpha
-            vec4 src = vec4(color * alpha, alpha);
-            accum += src * (1.0 - accum.a);
-        }
-        
-        currentPos += stepVec;
-        
-        // Break if we exit the [0, 1] bounds
-        if (any(lessThan(currentPos, vec3(0.0))) || any(greaterThan(currentPos, vec3(1.0)))) {
-            break;
+            validSamples++;
+            maxValue = max(maxValue, val);
         }
     }
-    
-    if (accum.a < 0.01) {
-        discard;
-    }
-    
-    pc_fragColor = accum;
+
+    if (validSamples == 0) discard;
+    pc_fragColor = vec4(safeColormap(normalize_val(maxValue)), u_opacity);
 }

@@ -11,6 +11,7 @@ import { useT } from '../../i18n/useT'
 import { GlossaryPanel } from '../../components/GlossaryPanel'
 import { useState } from 'react'
 import { OceanCopilot } from '../../components/OceanCopilot/OceanCopilot'
+import { VolumeIsoWorkspace } from '../../scene/workspace/VolumeIsoWorkspace'
 
 /**
  * Forecaster Console — Power-user UI mode
@@ -25,10 +26,16 @@ export function ForecasterConsole() {
   const selectedPlatformId = useTarangStore(s => s.selectedPlatformId)
   const hasSearchedRegion  = useTarangStore(s => s.hasSearchedRegion)
   const setUIMode          = useTarangStore(s => s.setUIMode)
+  const renderMode         = useTarangStore(s => s.renderMode)
+  const setRenderMode      = useTarangStore(s => s.setRenderMode)
   const t = useT()
   const [showGlossary, setShowGlossary] = useState(false)
 
   const showHomeOverlay = useTarangStore(s => s.showHomeOverlay)
+  // Volume/Iso open a dedicated 3D depth workspace instead of rendering on the globe (Slice
+  // stays on the globe, unchanged). Only once a region exists — before that there's nothing to
+  // show; closing returns to 'slice' so the globe/search view is always what's left underneath.
+  const showVolumeIsoWorkspace = hasSearchedRegion && renderMode !== 'slice'
 
   return (
     <div id="forecaster-console" style={styles.container}>
@@ -97,6 +104,14 @@ export function ForecasterConsole() {
           
           {/* ── Glossary Panel ────────────────────────────────────────────── */}
           {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
+
+          {/* ── Volume/Isosurface 3D Depth Workspace ─────────────────────── */}
+          {showVolumeIsoWorkspace && (
+            <VolumeIsoWorkspace
+              mode={renderMode as 'volume' | 'isosurface'}
+              onClose={() => setRenderMode('slice')}
+            />
+          )}
         </>
       )}
     </div>
