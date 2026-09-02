@@ -122,6 +122,65 @@
       </documentation>
     </dataset>
 
+    <dataset name="Copernicus Marine — Chlorophyll-a (LIVE)" ID="netcdf/copernicus_chlorophyll"
+             urlPath="netcdf/copernicus_chlorophyll.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+      <documentation type="summary">
+        Live Copernicus Marine biogeochemistry (cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m)
+        depth-resolved chlorophyll-a for the India EEZ. Variable: chl.
+        Fetched by backend/app/ingest/download_copernicus.py.
+      </documentation>
+    </dataset>
+
+    <dataset name="INCOIS NIO-HOOFS — Surface Currents (LIVE)" ID="netcdf/incois_currents"
+             urlPath="netcdf/incois_currents.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+      <documentation type="summary">
+        INCOIS operational NIO-HOOFS surface-current forecast for the India EEZ,
+        3-hourly. Variables: uo, vo. Pulled from https://incois.gov.in/thredds/ and
+        CF-normalised by backend/app/ingest/download_incois.py.
+      </documentation>
+    </dataset>
+
+    <dataset name="INCOIS — Sea Surface Temperature (LIVE)" ID="netcdf/incois_sst"
+             urlPath="netcdf/incois_sst.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+      <documentation type="summary">
+        INCOIS Ocean State Forecast SST for the India EEZ, 3-hourly. Variable: analysed_sst.
+        Pulled from https://incois.gov.in/thredds/ by backend/app/ingest/download_incois.py.
+      </documentation>
+    </dataset>
+
+    <dataset name="Copernicus Marine — Ocean State (LIVE)" ID="netcdf/copernicus_marine"
+             urlPath="netcdf/copernicus_marine.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+      <documentation type="summary">
+        Copernicus Marine global analysis-forecast, India EEZ — temperature, salinity and
+        currents merged into one file. Variables: thetao, so, uo, vo. 1/12°, 40 depth levels.
+        Built by backend/app/ingest/download_copernicus.py.
+      </documentation>
+    </dataset>
+
+    <dataset name="INCOIS Ocean State Forecast (LIVE)" ID="netcdf/incois_ocean"
+             urlPath="netcdf/incois_ocean.nc">
+      <serviceName>all</serviceName>
+      <dataType>Grid</dataType>
+      <dataFormat>NetCDF</dataFormat>
+      <documentation type="summary">
+        INCOIS NIO-HOOFS / Ocean State Forecast, India EEZ — SST and surface currents merged
+        into one file. Variables: analysed_sst, uo, vo. 3-hourly.
+        Built by backend/app/ingest/download_incois.py.
+      </documentation>
+    </dataset>
+
   </dataset>
 
 </catalog>

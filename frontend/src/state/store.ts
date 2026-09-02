@@ -169,7 +169,7 @@ export const useTarangStore = create<TarangState>()(
     error:               null,
 
     sources:             [],
-    activeSourceId:      'copernicus_temp',
+    activeSourceId:      'copernicus_marine',
     activeVar:           '',   // set by App.tsx once metadata for activeSourceId loads
     availableVariables:  [],
     cfMetadata:          {},

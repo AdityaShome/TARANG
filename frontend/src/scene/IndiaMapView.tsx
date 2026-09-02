@@ -11,10 +11,9 @@ import landGeo from '../assets/ne_110m_land.json'
 
 // Independent overlays share the globe's conventions: currents from a currents source, eddies
 // from a model source with u/v — NOT the active scalar "Data Source".
-// Depth-resolved u/v (time, depth, lat, lon) so the arrows track the depth slider.
-// Real Copernicus depth-resolved currents (uo/vo); synthetic fixture is the offline fallback.
-const VECTOR_SOURCE = 'copernicus_currents'
-const EDDY_SOURCE = 'copernicus_currents'
+// INCOIS NIO-HOOFS operational surface currents (uo/vo); synthetic fixture is the offline fallback.
+const VECTOR_SOURCE = 'incois_ocean'
+const EDDY_SOURCE = 'incois_ocean'
 const EDDY_COLORS: Record<string, string> = { warm: '#ff8c00', cold: '#00e5ff', front: '#ffd700' }
 
 /**

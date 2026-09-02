@@ -1,0 +1,25 @@
+# Copernicus Marine biogeochemistry — depth-resolved chlorophyll-a (the BGC-Argo / ocean-colour
+# variable in the PS). INCOIS' public THREDDS only carries a Pacific-Islands VIIRS cut, so the
+# Indian-Ocean chlorophyll comes from CMEMS. Fetched by download_copernicus.py.
+
+id: copernicus_chlorophyll
+label: "Copernicus Marine — Chlorophyll-a (LIVE)"
+description: "Live depth-resolved chlorophyll-a concentration from the Copernicus Marine global biogeochemistry model. Real BGC data for the phytoplankton / primary-productivity layer."
+
+adapter: NetCDFAdapter
+source: "http://thredds:8080/thredds/dodsC/netcdf/copernicus_chlorophyll.nc"
+local_cache: "data/netcdf/copernicus_chlorophyll.nc"
+local_cache_bbox: [45, -12, 108, 30]   # generous — picks in the wider N Indian Ocean use the clipped cache
+live_dataset_id: cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m
+variable: chl
+standard_name: mass_concentration_of_chlorophyll_a_in_sea_water
+long_name: "Chlorophyll-a Concentration"
+units: "mg m-3"
+valid_min: 0.0
+valid_max: 20.0
+
+colormap: inferno
+colormap_log: true
+render_type: volume
+
+default_bbox: [58, 2, 100, 26]

@@ -343,5 +343,62 @@ if __name__ == "__main__":
         ],
     )
 
+    # Offline fallbacks for the merged INCOIS + Copernicus sources and the Copernicus-BGC
+    # source — download_incois.py / download_copernicus.py overwrite these with real data.
+    print("Generating merged Copernicus Marine fallback (T/S/currents)...")
+    write_netcdf_multi(
+        OUT_DIR / "copernicus_marine.nc",
+        [
+            {"name": "thetao", "data": T, "long_name": "Sea Water Potential Temperature",
+             "units": "degrees_C", "standard_name": "sea_water_potential_temperature",
+             "valid_min": -10.0, "valid_max": 40.0},
+            {"name": "so", "data": S, "long_name": "Sea Water Salinity",
+             "units": "1e-3", "standard_name": "sea_water_salinity",
+             "valid_min": 0.0, "valid_max": 45.0},
+            {"name": "uo", "data": U, "long_name": "Eastward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "eastward_sea_water_velocity",
+             "valid_min": -3.0, "valid_max": 3.0},
+            {"name": "vo", "data": V, "long_name": "Northward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "northward_sea_water_velocity",
+             "valid_min": -3.0, "valid_max": 3.0},
+        ],
+    )
+
+    print("Generating merged INCOIS Ocean State fallback (SST + currents)...")
+    write_netcdf_multi(
+        OUT_DIR / "incois_ocean.nc",
+        [
+            {"name": "analysed_sst", "data": T, "long_name": "Sea Surface Temperature",
+             "units": "degC", "standard_name": "sea_surface_temperature",
+             "valid_min": 0.0, "valid_max": 40.0},
+            {"name": "uo", "data": U, "long_name": "Eastward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "eastward_sea_water_velocity",
+             "valid_min": -3.0, "valid_max": 3.0},
+            {"name": "vo", "data": V, "long_name": "Northward Sea Water Velocity",
+             "units": "m s-1", "standard_name": "northward_sea_water_velocity",
+             "valid_min": -3.0, "valid_max": 3.0},
+        ],
+    )
+
+    # Synthetic chlorophyll-a: surface-maximum, coastal/upwelling/river-plume enriched,
+    # decaying with depth (deep chlorophyll max near ~50 m).
+    print("Generating Copernicus-BGC chlorophyll fallback...")
+    CHL = np.zeros((N_TIME, NDEP, NLAT, NLON), dtype=np.float32)
+    coast = (0.9 * np.exp(-((LONS - 72) ** 2) / 8) + 0.7 * np.exp(-((LONS - 82) ** 2) / 6))
+    plume = 1.4 * np.exp(-((LONS - 88) ** 2 + (LATS - 20) ** 2) / 40)
+    somali = 1.1 * np.exp(-((LONS - 58) ** 2) / 30) * np.clip((LATS - 6) / 16, 0, 1)
+    surf_chl = np.clip(0.06 + 0.12 * np.exp(-((LATS - 12) ** 2) / 120)
+                       + coast * np.clip((26 - LATS) / 24, 0, 1) * 0.5 + plume + somali, 0.03, 8.0)
+    for ti in range(N_TIME):
+        for di, depth in enumerate(DEP):
+            dcm = 1.0 + 0.6 * np.exp(-((depth - 50) / 30) ** 2)     # deep chlorophyll max ~50 m
+            CHL[ti, di] = surf_chl * dcm * np.exp(-depth / 120.0)
+    write_netcdf(
+        OUT_DIR / "copernicus_chlorophyll.nc",
+        "chl", CHL,
+        "Chlorophyll-a Concentration", "mg m-3",
+        valid_min=0.0, valid_max=20.0,
+    )
+
     print("\nDone! Fixture NetCDF files written successfully.")
     print("Backend registry will auto-discover these via the YAML manifests.")

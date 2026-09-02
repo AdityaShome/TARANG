@@ -1,5 +1,5 @@
 id: copernicus_temp
-label: "Copernicus Marine (LIVE)"
+label: "Copernicus Marine — Temperature (global live-fetch)"
 description: "Live 3D sea water potential temperature from Copernicus Marine Service. Pre-cached for the Bay of Bengal; any other searched region is fetched live, bbox-scoped, straight from Copernicus (see live_dataset_id below)."
 
 adapter: NetCDFAdapter

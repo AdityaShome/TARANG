@@ -1,0 +1,28 @@
+# INCOIS Ocean State Forecast for the India EEZ — one source, three variables (analysed_sst,
+# uo, vo) merged by download_incois.py from INCOIS' NIO-HOOFS operational model + OSF SST.
+# The frontend Variable selector switches between them. Feeds the current-vector arrows and
+# Okubo-Weiss eddy detection.
+
+id: incois_ocean
+label: "INCOIS Ocean State Forecast (LIVE)"
+description: "Live operational SST and surface currents (u/v) from INCOIS's NIO-HOOFS ocean model / Ocean State Forecast system, 3-hourly, full India EEZ. Pick the field in the Variable selector."
+
+adapter: NetCDFAdapter
+source: "http://thredds:8080/thredds/dodsC/netcdf/incois_ocean.nc"
+local_cache: "data/netcdf/incois_ocean.nc"
+local_cache_bbox: [45, -12, 108, 30]   # generous — picks in the wider N Indian Ocean use the clipped cache
+variable: analysed_sst
+variable_v: vo
+standard_name: sea_surface_temperature
+long_name: "Sea Surface Temperature"
+units: degC
+valid_min: 0.0
+valid_max: 40.0
+
+colormap: viridis
+render_type: slice
+
+depth_levels:
+  - 0
+
+default_bbox: [58, 2, 100, 26]

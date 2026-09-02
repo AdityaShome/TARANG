@@ -135,9 +135,12 @@ class NetCDFAdapter(DataSourceAdapter):
     def _local_cache_covers(self, bbox: tuple[float, float, float, float] | None) -> bool:
         """
         True if local_cache exists on disk AND either we don't know its extent
-        (local_cache_bbox unset — assume it's a global/full-coverage file) or the
-        requested bbox falls inside the known extent. A researcher searching a sea
-        outside a regional pre-download must NOT silently get that region's data back.
+        (local_cache_bbox unset — assume global) or the requested bbox SUBSTANTIALLY
+        overlaps the cached extent. We use the cache (xarray .sel clips to whatever the
+        file actually holds) whenever most of the request is covered — a click-pick box
+        that spills a degree past the cached edge should not fall through to a live fetch.
+        A genuinely different sea (little/no overlap) still goes live, so a researcher
+        searching elsewhere never silently gets this region's data back.
         """
         if not self.local_cache or not Path(self.local_cache).exists():
             return False
@@ -145,11 +148,12 @@ class NetCDFAdapter(DataSourceAdapter):
             return True
         min_lon, min_lat, max_lon, max_lat = bbox
         c_min_lon, c_min_lat, c_max_lon, c_max_lat = self.local_cache_bbox
-        eps = 0.01  # degrees — avoid float-boundary flapping right at the cached edge
-        return (
-            c_min_lon - eps <= min_lon and max_lon <= c_max_lon + eps and
-            c_min_lat - eps <= min_lat and max_lat <= c_max_lat + eps
-        )
+
+        ix = max(0.0, min(max_lon, c_max_lon) - max(min_lon, c_min_lon))
+        iy = max(0.0, min(max_lat, c_max_lat) - max(min_lat, c_min_lat))
+        inter = ix * iy
+        req = max((max_lon - min_lon) * (max_lat - min_lat), 1e-9)
+        return inter / req >= 0.4
 
     def _open_local_or_configured_url(self, use_local: bool, override_path: str | None = None) -> xr.Dataset:
         source = override_path if override_path is not None else (self.local_cache if use_local else self.source_url)

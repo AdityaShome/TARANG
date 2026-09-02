@@ -9,6 +9,7 @@ filenames the registry manifests and thredds/catalog.xml expect:
   data/netcdf/copernicus_bob_temp.nc      (variable: thetao)
   data/netcdf/copernicus_bob_salinity.nc  (variable: so)
   data/netcdf/copernicus_currents.nc      (variables: uo, vo)
+  data/netcdf/copernicus_chlorophyll.nc   (variable: chl)
 
 This is REAL model output — the global analysis/forecast product at 1/12° (~9 km).
 Run it before demo day; the app then serves these files even with OFFLINE_MODE=true.
@@ -36,6 +37,21 @@ except ImportError:
 OUT_DIR = Path(os.getenv("DATA_DIR", "data")) / "netcdf"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _compress(path: Path):
+    """zlib-compress + float32 in place — the raw EEZ subsets are ~200 MB/var otherwise."""
+    try:
+        import xarray as xr
+        ds = xr.open_dataset(path).load()
+        enc = {v: {"zlib": True, "complevel": 4, "dtype": "float32"} for v in ds.data_vars}
+        tmp = path.with_suffix(".tmp")
+        ds.to_netcdf(tmp, encoding=enc)
+        ds.close()
+        tmp.replace(path)
+        print(f"  compressed → {path.stat().st_size/1e6:.0f} MB")
+    except Exception as e:
+        print(f"  (compression skipped: {e})")
+
 # Each 3D physics variable is its own dataset_id in the CMEMS global analysis-forecast
 # product (the bundled *_anfc_0.083deg_P1D-m id only carries surface/derived fields).
 # Verified directly against the Copernicus Marine API.
@@ -43,6 +59,7 @@ JOBS = [
     ("cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m", ["thetao"],     "copernicus_bob_temp.nc"),
     ("cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m",     ["so"],         "copernicus_bob_salinity.nc"),
     ("cmems_mod_glo_phy-cur_anfc_0.083deg_P1D-m",    ["uo", "vo"],   "copernicus_currents.nc"),
+    ("cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m",     ["chl"],        "copernicus_chlorophyll.nc"),
 ]
 BBOX = dict(minimum_longitude=58, maximum_longitude=100, minimum_latitude=2, maximum_latitude=26)
 
@@ -66,12 +83,10 @@ for dataset_id, variables, filename in JOBS:
             username=os.environ.get("COPERNICUS_USERNAME"),
             password=os.environ.get("COPERNICUS_PASSWORD"),
             overwrite=True,
-            # zlib-compress — the raw EEZ currents subset is ~370 MB otherwise.
-            netcdf_compression_enabled=True,
-            netcdf_compression_level=4,
             **BBOX,
         )
         print(f"  done: {out_file}")
+        _compress(out_file)
     except Exception as e:
         print(f"  FAILED: {type(e).__name__}: {e}")
         failed.append(filename)
@@ -80,4 +95,20 @@ if failed:
     print(f"\n{len(failed)} download(s) failed: {failed}")
     print("The app falls back to the synthetic fixtures for those (generate_fixtures.py).")
     sys.exit(1)
+
+# Merge T/S/currents into one multi-variable file — this is the `copernicus_marine` registry
+# source, whose Variable selector switches between thetao / so / uo / vo (like hycom_bob).
+try:
+    import xarray as xr
+    parts = [xr.open_dataset(OUT_DIR / f) for f in
+             ("copernicus_bob_temp.nc", "copernicus_bob_salinity.nc", "copernicus_currents.nc")]
+    merged = xr.merge(parts, compat="override", join="override")
+    merged.attrs.update(title="Copernicus Marine analysis-forecast — India EEZ (T/S/currents)",
+                        institution="Copernicus Marine Service")
+    enc = {v: {"zlib": True, "complevel": 4, "dtype": "float32"} for v in merged.data_vars}
+    merged.to_netcdf(OUT_DIR / "copernicus_marine.nc", encoding=enc)
+    print(f"  merged → copernicus_marine.nc  vars={list(merged.data_vars)}")
+except Exception as e:
+    print(f"  merge skipped: {e}")
+
 print("\nAll Copernicus downloads complete.")

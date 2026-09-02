@@ -20,9 +20,9 @@ function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 
 // Registry source this layer always reads from — vectors aren't picked via the main "Data
 // Source" dropdown (that's a single scalar variable at a time); like markers, this is an
 // independent overlay that's simply on or off via the "Vectors" layer checkbox.
-// Real Copernicus currents carry depth-resolved uo/vo (time, depth, lat, lon), so the arrows
-// follow the depth slider — a true 3D current field. Synthetic fixture is the offline fallback.
-const VECTOR_SOURCE = 'copernicus_currents'
+// INCOIS NIO-HOOFS operational surface currents (uo/vo). Synthetic fixture is the offline
+// fallback. Copernicus Marine carries the depth-resolved (3D) current field.
+const VECTOR_SOURCE = 'incois_ocean'
 const U_VAR = 'uo'
 const V_VAR = 'vo'
 

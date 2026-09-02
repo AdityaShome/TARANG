@@ -23,7 +23,7 @@ const TYPE_COLORS: Record<string, number> = {
 // Okubo-Weiss needs current-velocity components. The main "Data Source" dropdown selects a
 // single scalar (temperature, salinity…) that usually has no u/v — so, like VectorLayer, this
 // overlay always derives from a currents-carrying source rather than the active one.
-const EDDY_SOURCE = 'copernicus_currents'   // real Copernicus uo/vo; synthetic fixture is the offline fallback
+const EDDY_SOURCE = 'incois_ocean'   // real INCOIS NIO-HOOFS uo/vo; synthetic fixture is the offline fallback
 
 export class EddyOverlayLayer implements Layer {
   private meshes: THREE.InstancedMesh[] = []

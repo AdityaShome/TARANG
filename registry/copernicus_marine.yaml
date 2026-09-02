@@ -1,0 +1,26 @@
+# Copernicus Marine global analysis-forecast for the India EEZ — one source, four variables
+# (thetao, so, uo, vo) merged into one file by download_copernicus.py. The frontend Variable
+# selector switches between them. This is the headline real-data source for the demo.
+
+id: copernicus_marine
+label: "Copernicus Marine — Ocean State (LIVE)"
+description: "Depth-resolved temperature, salinity and currents (u/v) from the Copernicus Marine global analysis-forecast model (1/12°, 40 levels), full India EEZ. Pick the field in the Variable selector."
+
+adapter: NetCDFAdapter
+source: "http://thredds:8080/thredds/dodsC/netcdf/copernicus_marine.nc"
+local_cache: "data/netcdf/copernicus_marine.nc"
+local_cache_bbox: [45, -12, 108, 30]   # generous — picks in the wider N Indian Ocean use the clipped cache
+# Live fallback outside the cached EEZ box fetches temperature; switch to the per-variable
+# Copernicus sources for live salinity/currents outside the EEZ.
+live_dataset_id: cmems_mod_glo_phy-thetao_anfc_0.083deg_P1D-m
+variable: thetao
+standard_name: sea_water_potential_temperature
+long_name: "Water Temperature"
+units: "degrees_C"
+valid_min: -10.0
+valid_max: 40.0
+
+colormap: viridis
+render_type: volume
+
+default_bbox: [58, 2, 100, 26]

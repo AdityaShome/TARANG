@@ -1,5 +1,5 @@
 id: copernicus_salinity
-label: "Copernicus Marine — Salinity (LIVE)"
+label: "Copernicus Marine — Salinity (global live-fetch)"
 description: "Live 3D sea water salinity from Copernicus Marine Service. Pre-cached for the Bay of Bengal; any other searched region is fetched live, bbox-scoped, straight from Copernicus (see live_dataset_id below)."
 
 adapter: NetCDFAdapter
