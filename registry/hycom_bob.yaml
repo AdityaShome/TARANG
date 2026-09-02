@@ -6,8 +6,10 @@ label: "HYCOM GLBy0.08 — Bay of Bengal"
 description: "Depth-resolved temperature, salinity and currents (u/v) from HYCOM GLBy0.08 expt 93.0 for the Bay of Bengal. Pick the variable in the Variable selector."
 
 adapter: NetCDFAdapter
-source: "http://thredds:8080/thredds/dodsC/netcdf/hycom_bob.nc"
+source: "http://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0"
 local_cache: "data/netcdf/hycom_bob.nc"
+local_cache_bbox: [80, 5, 100, 25]   # Bay of Bengal
+decode_times: false
 # The variable the source loads with — the selector switches among all four.
 variable: water_temp
 standard_name: sea_water_temperature

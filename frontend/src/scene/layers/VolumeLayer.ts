@@ -96,7 +96,7 @@ export class VolumeLayer implements Layer {
           this.texture.image.depth !== depthSize
         ) {
           if (this.texture) this.texture.dispose()
-          this.texture = new THREE.Data3DTexture(data, lonSize, latSize, depthSize)
+          this.texture = new THREE.Data3DTexture(data as unknown as Float32Array<ArrayBuffer>, lonSize, latSize, depthSize)
           this.texture.format = THREE.RedFormat
           this.texture.type = THREE.FloatType
           // NearestFilter: linear on a float texture needs OES_texture_float_linear.
@@ -106,7 +106,7 @@ export class VolumeLayer implements Layer {
           this.texture.needsUpdate = true
           this.material.uniforms.u_data.value = this.texture
         } else {
-          this.texture.image.data = data
+          this.texture.image.data = data as any
           this.texture.needsUpdate = true
         }
         this.hasData = true

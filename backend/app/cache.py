@@ -145,14 +145,14 @@ class RedisCache:
         """Normalise bbox to a cache-key-safe string."""
         return f"{bbox[0]:.2f}_{bbox[1]:.2f}_{bbox[2]:.2f}_{bbox[3]:.2f}"
 
-    def slice_key(self, source_id: str, var: str, depth_m: float, time_idx: int, bbox: tuple) -> str:
-        return f"slice:{source_id}:{var}:{depth_m:.1f}:{time_idx}:{self.bbox_to_str(bbox)}"
+    def slice_key(self, source_id: str, var: str, depth_m: float, time_idx: int, bbox: tuple, mode: str = "live") -> str:
+        return f"slice:{source_id}:{var}:{depth_m:.1f}:{time_idx}:{self.bbox_to_str(bbox)}:{mode}"
 
-    def volume_key(self, source_id: str, var: str, time_idx: int, bbox: tuple) -> str:
-        return f"volume:{source_id}:{var}:{time_idx}:{self.bbox_to_str(bbox)}"
+    def volume_key(self, source_id: str, var: str, time_idx: int, bbox: tuple, mode: str = "live") -> str:
+        return f"volume:{source_id}:{var}:{time_idx}:{self.bbox_to_str(bbox)}:{mode}"
 
-    def isosurface_key(self, source_id: str, var: str, threshold: float, time_idx: int, bbox: tuple) -> str:
-        return f"iso:{source_id}:{var}:{threshold:.4f}:{time_idx}:{self.bbox_to_str(bbox)}"
+    def isosurface_key(self, source_id: str, var: str, threshold: float, time_idx: int, bbox: tuple, mode: str = "live") -> str:
+        return f"iso:{source_id}:{var}:{threshold:.4f}:{time_idx}:{self.bbox_to_str(bbox)}:{mode}"
 
     def metadata_key(self, source_id: str) -> str:
         return f"meta:{source_id}"

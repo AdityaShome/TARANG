@@ -8,12 +8,18 @@ Cached in Redis for 1 hour (metadata rarely changes).
 
 from __future__ import annotations
 import logging
-from fastapi import APIRouter, HTTPException, Request
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
 from backend.app.cache import TTL_METADATA
 
-logger = logging.getLogger("tarang.endpoint.metadata")
-router = APIRouter(tags=["metadata"])
+logger = logging.getLogger("tarang.api.metadata")
+router = APIRouter(tags=["data"])
+
+# Dedicated executor for metadata to prevent starvation from slow live fetches in the default pool.
+_metadata_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="MetadataPool")
+
 
 
 @router.get("/metadata")
@@ -47,7 +53,14 @@ async def get_metadata(source: str, request: Request):
 
     async def compute():
         import orjson
-        meta = adapter.get_metadata()
+        import asyncio
+        import logging
+        logger = logging.getLogger("tarang.api.metadata")
+        logger.info(f"--> compute() started for {source}")
+        loop = asyncio.get_running_loop()
+        logger.info("--> waiting for metadata executor...")
+        meta = await loop.run_in_executor(_metadata_executor, adapter.get_metadata)
+        logger.info(f"--> executor finished for {source}")
         return orjson.dumps(meta)
 
     raw = await cache.get_or_compute(cache_key, TTL_METADATA, compute)

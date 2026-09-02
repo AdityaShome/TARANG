@@ -4,8 +4,10 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 
 // Local development: connect frontend to the local backend
-const backendTarget = 'http://127.0.0.1:8000'
-const threddsTarget = 'http://127.0.0.1:8080'
+// When running in docker-compose, this must point to the service names, not localhost
+const backendTarget = process.env.VITE_BACKEND_TARGET || 'http://backend:8000'
+const threddsTarget = process.env.VITE_THREDDS_TARGET || 'http://thredds:8080'
+
 
 export default defineConfig({
   plugins: [react()],

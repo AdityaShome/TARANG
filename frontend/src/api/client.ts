@@ -98,11 +98,52 @@ function bboxStr(bbox: [number, number, number, number]): string {
   return bbox.join(',')
 }
 
+// ── Retry helper — survives backend restarts ─────────────────────────────────
+/**
+ * Wraps a fetch call with exponential backoff retry logic.
+ * If the fetch fails (network error or 5xx), retries up to `maxRetries` times
+ * with delays of 1s, 2s, 4s, 8s, etc.
+ * Aborted requests (AbortError) are NOT retried — they are intentional cancellations.
+ */
+async function fetchWithRetry(
+  url: string,
+  opts: RequestInit = {},
+  maxRetries = 10,
+  baseDelayMs = 1000,
+): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, opts)
+      // Retry on 502/503/504 (backend restarting)
+      if (res.status >= 502 && res.status <= 504 && attempt < maxRetries) {
+        const delay = baseDelayMs * Math.pow(2, attempt)
+        console.warn(`[TARANG] ${url} returned ${res.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+      return res
+    } catch (err: unknown) {
+      // Don't retry aborted requests
+      if (err instanceof Error && err.name === 'AbortError') throw err
+      // Network error — retry
+      if (attempt < maxRetries) {
+        const delay = baseDelayMs * Math.pow(2, attempt)
+        console.warn(`[TARANG] ${url} fetch failed, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries}):`, err)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+      throw err
+    }
+  }
+  // Should never reach here, but TypeScript needs it
+  throw new Error(`fetchWithRetry: exhausted all ${maxRetries} retries for ${url}`)
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** List all registered data sources. */
+/** List all registered data sources. Uses retry to survive backend restarts. */
 export async function fetchSources(signal?: AbortSignal): Promise<SourceEntry[]> {
-  const res = await fetch(`${API_BASE}/sources`, { signal })
+  const res = await fetchWithRetry(`${API_BASE}/sources`, { signal })
   if (!res.ok) throw new Error(`fetchSources failed: ${res.status}`)
   const json = await res.json()
   return json.sources as SourceEntry[]
@@ -112,7 +153,7 @@ export async function fetchSources(signal?: AbortSignal): Promise<SourceEntry[]>
 export async function fetchMetadata(sourceId: string, signal?: AbortSignal): Promise<SourceMetadata> {
   const key = `meta:${sourceId}`
   return dedupe(key, async () => {
-    const res = await fetch(`${API_BASE}/metadata?source=${encodeURIComponent(sourceId)}`, { signal })
+    const res = await fetchWithRetry(`${API_BASE}/metadata?source=${encodeURIComponent(sourceId)}`, { signal })
     if (!res.ok) throw new Error(`fetchMetadata failed: ${res.status}`)
     return res.json() as Promise<SourceMetadata>
   })
@@ -125,12 +166,13 @@ export async function fetchSlice(params: {
   depth:   number       // actual depth in meters (already snapped to nearest level)
   time:    number       // time step index
   bbox:    [number, number, number, number]
+  mode?:   'live' | 'cached'
 }, signal?: AbortSignal): Promise<ParsedSlice> {
-  const { source, var: variable, depth, time, bbox } = params
-  const key = `slice:${source}:${variable}:${depth}:${time}:${bboxStr(bbox)}`
+  const { source, var: variable, depth, time, bbox, mode = 'live' } = params
+  const key = `slice:${source}:${variable}:${depth}:${time}:${bboxStr(bbox)}:${mode}`
 
   return dedupe(key, async () => {
-    const url = `${API_BASE}/slice?source=${source}&var=${variable}&depth=${depth}&time=${time}&bbox=${bboxStr(bbox)}`
+    const url = `${API_BASE}/slice?source=${source}&var=${variable}&depth=${depth}&time=${time}&bbox=${bboxStr(bbox)}&mode=${mode}`
     const res = await fetch(url, { signal })
     if (!res.ok) throw new Error(`fetchSlice failed: ${res.status}`)
     const buffer = await res.arrayBuffer()
@@ -145,12 +187,13 @@ export async function fetchVolume(params: {
   var:    string
   time:   number
   bbox:   [number, number, number, number]
+  mode?:  'live' | 'cached'
 }, signal?: AbortSignal): Promise<ParsedVolume> {
-  const { source, var: variable, time, bbox } = params
-  const key = `volume:${source}:${variable}:${time}:${bboxStr(bbox)}`
+  const { source, var: variable, time, bbox, mode = 'live' } = params
+  const key = `volume:${source}:${variable}:${time}:${bboxStr(bbox)}:${mode}`
 
   return dedupe(key, async () => {
-    const url = `${API_BASE}/volume?source=${source}&var=${variable}&time=${time}&bbox=${bboxStr(bbox)}`
+    const url = `${API_BASE}/volume?source=${source}&var=${variable}&time=${time}&bbox=${bboxStr(bbox)}&mode=${mode}`
     const res = await fetch(url, { signal })
     if (!res.ok) throw new Error(`fetchVolume failed: ${res.status}`)
     const buffer = await res.arrayBuffer()
@@ -166,12 +209,13 @@ export async function fetchIsosurface(params: {
   threshold: number
   time:      number
   bbox:      [number, number, number, number]
+  mode?:     'live' | 'cached'
 }, signal?: AbortSignal): Promise<ParsedIsosurface> {
-  const { source, var: variable, threshold, time, bbox } = params
-  const key = `iso:${source}:${variable}:${threshold}:${time}:${bboxStr(bbox)}`
+  const { source, var: variable, threshold, time, bbox, mode = 'live' } = params
+  const key = `iso:${source}:${variable}:${threshold}:${time}:${bboxStr(bbox)}:${mode}`
 
   return dedupe(key, async () => {
-    const url = `${API_BASE}/isosurface?source=${source}&var=${variable}&threshold=${threshold}&time=${time}&bbox=${bboxStr(bbox)}`
+    const url = `${API_BASE}/isosurface?source=${source}&var=${variable}&threshold=${threshold}&time=${time}&bbox=${bboxStr(bbox)}&mode=${mode}`
     const res = await fetch(url, { signal })
     if (!res.ok) throw new Error(`fetchIsosurface failed: ${res.status}`)
     const buffer = await res.arrayBuffer()

@@ -17,6 +17,7 @@ export function ControlPanel() {
     isoThreshold, setIsoThreshold,
     colormap, setColormap, setColormapName,
     layerVisibility, toggleLayer,
+    dataSourceMode, setDataSourceMode,
   } = useTarangStore()
   const t = useT()
 
@@ -68,6 +69,44 @@ export function ControlPanel() {
   return (
     <div id="control-panel-inner" style={styles.panel}>
 
+      {/* ── Data Source Mode Toggle ─────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        <button
+          id="mode-toggle-live"
+          style={{
+            flex: 1, padding: '8px', cursor: 'pointer',
+            background: dataSourceMode === 'live' ? 'rgba(255, 51, 51, 0.2)' : 'transparent',
+            color: dataSourceMode === 'live' ? '#ff3333' : '#666',
+            border: `1px solid ${dataSourceMode === 'live' ? '#ff3333' : '#444'}`,
+            borderRadius: '4px',
+            fontWeight: 'bold', letterSpacing: '2px',
+            textShadow: dataSourceMode === 'live' ? '0 0 10px rgba(255,51,51,0.8)' : 'none',
+            boxShadow: dataSourceMode === 'live' ? 'inset 0 0 10px rgba(255,51,51,0.2)' : 'none',
+            transition: 'all 0.3s ease',
+          }}
+          onClick={() => setDataSourceMode('live')}
+        >
+          🔴 LIVE
+        </button>
+        <button
+          id="mode-toggle-cached"
+          style={{
+            flex: 1, padding: '8px', cursor: 'pointer',
+            background: dataSourceMode === 'cached' ? 'rgba(0, 229, 255, 0.2)' : 'transparent',
+            color: dataSourceMode === 'cached' ? '#00e5ff' : '#666',
+            border: `1px solid ${dataSourceMode === 'cached' ? '#00e5ff' : '#444'}`,
+            borderRadius: '4px',
+            fontWeight: 'bold', letterSpacing: '2px',
+            textShadow: dataSourceMode === 'cached' ? '0 0 10px rgba(0,229,255,0.8)' : 'none',
+            boxShadow: dataSourceMode === 'cached' ? 'inset 0 0 10px rgba(0,229,255,0.2)' : 'none',
+            transition: 'all 0.3s ease',
+          }}
+          onClick={() => setDataSourceMode('cached')}
+        >
+          ⚡ CACHED
+        </button>
+      </div>
+
       {/* ── Source Selector ─────────────────────────────────────────── */}
       <Section label={t('dataSource')}>
         <Select
@@ -92,14 +131,20 @@ export function ControlPanel() {
       {/* ── Render Mode ─────────────────────────────────────────────── */}
       <Section label={t('renderMode')}>
         <div style={styles.toggleGroup}>
-          {(['slice', 'volume', 'isosurface'] as const).map(mode => (
+          {(['slice', 'volume', 'isosurface', 'cube'] as const).map(mode => (
             <button
               key={mode}
               id={`render-mode-${mode}`}
               style={{ ...styles.toggle, ...(renderMode === mode ? styles.toggleActive : {}) }}
               onClick={() => setRenderMode(mode)}
             >
-              {mode === 'slice' ? `⬜ ${t('modeSlice')}` : mode === 'volume' ? `🧊 ${t('modeVolume')}` : `🔵 ${t('modeIso')}`}
+              {mode === 'slice'
+                ? `⧞ ${t('modeSlice')}`
+                : mode === 'volume'
+                ? `🧥 ${t('modeVolume')}`
+                : mode === 'isosurface'
+                ? `🔵 ${t('modeIso')}`
+                : `🗳️ ${t('modeCube')}`}
             </button>
           ))}
         </div>
@@ -265,7 +310,15 @@ function Select({ id, value, onChange, options, disabled }: {
       disabled={disabled}
       style={{ ...styles.select, ...(disabled ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }}
     >
-      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      {options.map(o => (
+        <option 
+          key={o.value} 
+          value={o.value} 
+          style={{ background: '#001e3c', color: '#a0c4e8' }}
+        >
+          {o.label}
+        </option>
+      ))}
     </select>
   )
 }

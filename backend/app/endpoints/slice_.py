@@ -14,6 +14,7 @@ Query params:
 
 from __future__ import annotations
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from fastapi import APIRouter, HTTPException, Query, Request
 from backend.app.cache import TTL_SLICE
@@ -21,6 +22,8 @@ from backend.app.endpoints.binary import make_binary_response, parse_bbox
 
 logger = logging.getLogger("tarang.endpoint.slice")
 router = APIRouter(tags=["data"])
+
+_data_executor = ThreadPoolExecutor(max_workers=64, thread_name_prefix="DataPool")
 
 
 @router.get("/slice")
@@ -31,6 +34,7 @@ async def get_slice(
     depth:  float = Query(..., description="Depth in meters (snaps to nearest level)"),
     time:   int   = Query(0,   description="Time step index (0-based)"),
     bbox:   str   = Query("80,5,100,25", description="minLon,minLat,maxLon,maxLat"),
+    mode:   str   = Query("live", description="Data mode (live|cached)"),
 ):
     registry = request.app.state.registry
     cache    = request.app.state.cache
@@ -47,14 +51,14 @@ async def get_slice(
         raise HTTPException(400, str(e))
 
     # ── Cache key ─────────────────────────────────────────────────────────────
-    key = cache.slice_key(source, var, depth, time, bbox_tuple)
+    key = cache.slice_key(source, var, depth, time, bbox_tuple, mode)
 
     async def compute() -> bytes:
         loop = asyncio.get_running_loop()
         # xarray .compute() is CPU-bound — run in a thread pool
         result = await loop.run_in_executor(
-            None,
-            lambda: adapter.get_slice(var, depth, time, bbox_tuple)
+            _data_executor,
+            lambda: adapter.get_slice(var, depth, time, bbox_tuple, mode)
         )
         # Build binary payload
         header = {

@@ -114,7 +114,7 @@ async def get_front(
     var: str = Query("water_temp", description="Variable name for gradient (water_temp or salinity)"),
     time: int = Query(0, description="Time step index (0-based)"),
     bbox: str = Query("80,5,100,25", description="minLon,minLat,maxLon,maxLat"),
-    threshold: float = Query(0.05, description="Gradient magnitude threshold"),
+    threshold: float = Query(0.00005, description="Gradient magnitude threshold"),
 ):
     registry = request.app.state.registry
     try:

@@ -42,4 +42,6 @@ EXPOSE 8000
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 ENTRYPOINT ["/usr/local/bin/backend-entrypoint.sh"]
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# --reload-dir /app/backend watches ONLY Python source; NOT /app/data (3GB NetCDFs).
+# --workers is incompatible with --reload, so single-worker hot-reload is used in dev.
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/backend"]

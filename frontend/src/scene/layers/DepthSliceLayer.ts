@@ -74,14 +74,14 @@ export class DepthSliceLayer implements Layer {
 
     if (!this.texture || this.texture.image.width !== lonSize || this.texture.image.height !== latSize) {
       if (this.texture) this.texture.dispose()
-      this.texture = new THREE.DataTexture(data, lonSize, latSize, THREE.RedFormat, THREE.FloatType)
+      this.texture = new THREE.DataTexture(data as unknown as Float32Array<ArrayBuffer>, lonSize, latSize, THREE.RedFormat, THREE.FloatType)
       // NearestFilter: linear on a float texture needs OES_texture_float_linear.
       this.texture.minFilter = THREE.NearestFilter
       this.texture.magFilter = THREE.NearestFilter
       this.texture.needsUpdate = true
       this.material.uniforms.u_data.value = this.texture
     } else {
-      this.texture.image.data = data
+      this.texture.image.data = data as any
       this.texture.needsUpdate = true
     }
     this.hasData = true
