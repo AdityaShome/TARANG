@@ -123,8 +123,20 @@ async def get_profile(
             try:
                 import numpy as np
                 adapter = registry.get_adapter(source)
-                    model_depths, model_sal = adapter.get_profile_at(adapter_var, profile["lat"], profile["lon"], time_idx)
-                    valid_mask = model_sal != adapter._extract_cf_meta(adapter.open(None), adapter_var, adapter._resolve_depth_levels(adapter.open(None))).missing_value
+
+                if profile["temperature"] and "temperature" in profile["units"]:
+                    model_depths, model_temp = adapter.get_profile_at("water_temp", profile["lat"], profile["lon"], time_idx)
+                    # Ignore NaNs/missing values for interpolation by masking
+                    valid_mask = model_temp != adapter._extract_cf_meta(adapter.open(None), "water_temp", adapter._resolve_depth_levels(adapter.open(None))).missing_value
+                    if np.any(valid_mask):
+                        interp_temp = np.interp(profile["depth"], model_depths[valid_mask], model_temp[valid_mask], left=np.nan, right=np.nan)
+                        profile["model_temperature"] = [float(v) if not np.isnan(v) else None for v in interp_temp]
+                        profile["delta_temperature"] = [float(m - o) if m is not None and o is not None else None
+                                                        for m, o in zip(profile["model_temperature"], profile["temperature"])]
+
+                if profile["salinity"] and "salinity" in profile["units"]:
+                    model_depths, model_sal = adapter.get_profile_at("salinity", profile["lat"], profile["lon"], time_idx)
+                    valid_mask = model_sal != adapter._extract_cf_meta(adapter.open(None), "salinity", adapter._resolve_depth_levels(adapter.open(None))).missing_value
                     if np.any(valid_mask):
                         interp_sal = np.interp(profile["depth"], model_depths[valid_mask], model_sal[valid_mask], left=np.nan, right=np.nan)
                         profile["model_salinity"] = [float(v) if not np.isnan(v) else None for v in interp_sal]
