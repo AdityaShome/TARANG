@@ -44,8 +44,10 @@ export function ForecasterConsole() {
   return (
     <div id="forecaster-console" style={styles.container}>
       {/* ── View: 2D India map, or the 3D globe ─────────────────────── */}
+      {/* The welcome overlay wants the auto-rotating globe behind it (see SceneManager's
+          showHomeOverlay handling), so force the globe until the user dismisses it. */}
       <div style={styles.sceneWrapper}>
-        {viewScope === 'india' ? <IndiaMapView /> : <SceneManager />}
+        {viewScope === 'india' && !showHomeOverlay ? <IndiaMapView /> : <SceneManager />}
         {!hasSearchedRegion && !showHomeOverlay && (
           <div id="search-hint" style={styles.searchHint}>
             {t('searchHint')}

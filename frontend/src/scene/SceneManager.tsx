@@ -99,6 +99,8 @@ void main() {
 const earthFrag = `
 uniform sampler2D tDay;
 uniform sampler2D tNight;
+uniform float uDayLoaded;    // 1.0 once the day texture is in, 0.0 while it's still null
+uniform float uNightLoaded;
 varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vPosition;
@@ -107,12 +109,14 @@ void main() {
   vec3 dayColor = texture2D(tDay, vUv).rgb;
   vec3 nightColor = texture2D(tNight, vUv).rgb;
 
-  // If textures failed to load, fall back to a procedural deep ocean color
-  if (length(dayColor) < 0.01) {
-      dayColor = vec3(0.01, 0.15, 0.4);
+  // Fall back to a procedural deep-ocean colour ONLY while a texture hasn't loaded yet —
+  // never per-pixel. (A per-pixel "is this black?" test also caught the darkest real ocean
+  // basins and painted them a flat blue blob over the Arabian Sea / Chagos trench.)
+  if (uDayLoaded < 0.5) {
+      dayColor = vec3(0.02, 0.16, 0.4);
   }
-  if (length(nightColor) < 0.01) {
-      nightColor = vec3(0.0, 0.01, 0.05);
+  if (uNightLoaded < 0.5) {
+      nightColor = vec3(0.0, 0.01, 0.04);
   }
 
   // Sun direction (World space, static relative to Earth)
@@ -254,7 +258,9 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       fragmentShader: earthFrag,
       uniforms: {
         tDay: { value: null },
-        tNight: { value: null }
+        tNight: { value: null },
+        uDayLoaded: { value: 0 },
+        uNightLoaded: { value: 0 }
       }
     })
 
@@ -268,14 +274,16 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         earthMat.uniforms.tDay.value = tex;
+        earthMat.uniforms.uDayLoaded.value = 1;
         earthMat.needsUpdate = true;
       }
     )
     texLoader.load(
       '/earth-night.jpg',
-      (tex) => { 
+      (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
-        earthMat.uniforms.tNight.value = tex; 
+        earthMat.uniforms.tNight.value = tex;
+        earthMat.uniforms.uNightLoaded.value = 1;
         earthMat.needsUpdate = true;
       }
     )

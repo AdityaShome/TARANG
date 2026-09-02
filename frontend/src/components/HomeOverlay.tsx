@@ -96,16 +96,19 @@ export function HomeOverlay() {
         perspective: '1500px',
       }}
     >
-      {/* ── Massive 3D HUD Panel on the right ── */}
-      <div 
+      {/* ── 3D HUD Panel on the right ── */}
+      <div
         style={{
           position: 'relative',
-          width: '50%',
+          width: 'clamp(380px, 46vw, 640px)',
+          maxWidth: '100vw',
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
-          padding: '0 80px',
+          gap: '24px',
+          padding: '48px clamp(28px, 5vw, 72px)',
+          overflowY: 'auto',
           background: 'linear-gradient(90deg, rgba(2,8,16,0) 0%, rgba(2,8,16,0.8) 40%, rgba(2,8,16,0.95) 100%)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
@@ -119,44 +122,44 @@ export function HomeOverlay() {
         <div style={{ position: 'absolute', top: '10%', left: '-1px', width: '2px', height: '100px', background: '#00d4ff', boxShadow: '0 0 10px #00d4ff' }} />
         <div style={{ position: 'absolute', bottom: '20%', left: '-1px', width: '2px', height: '50px', background: '#00d4ff', boxShadow: '0 0 10px #00d4ff' }} />
 
-        <div style={{ 
-          transform: 'translateZ(60px)', 
-          animation: 'slide-up-stagger 1s cubic-bezier(0.16, 1, 0.3, 1) forwards' 
+        <div style={{
+          transform: 'translateZ(60px)',
+          animation: 'slide-up-stagger 1s cubic-bezier(0.16, 1, 0.3, 1) forwards'
         }}>
-          <div style={{ color: '#00d4ff', fontSize: '14px', letterSpacing: '4px', textTransform: 'uppercase', marginBottom: '10px', fontWeight: 600 }}>
+          <div style={{ color: '#00d4ff', fontSize: '13px', letterSpacing: '4px', textTransform: 'uppercase', marginBottom: '10px', fontWeight: 600 }}>
             System Initialized // INCOIS
           </div>
-          
-          <h1 style={{ 
-            fontSize: '5.5rem', 
-            fontWeight: '900', 
-            margin: '0 0 10px 0',
-            lineHeight: 1,
+
+          <h1 style={{
+            fontSize: 'clamp(2.2rem, 5.5vw, 4.5rem)',
+            fontWeight: '900',
+            margin: '0 0 8px 0',
+            lineHeight: 1.05,
             background: 'linear-gradient(135deg, #ffffff 0%, #00d4ff 50%, #1046ff 100%)',
             backgroundSize: '200% auto',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
-            letterSpacing: '-2px',
+            letterSpacing: '-1px',
             animation: 'gradient-text-shift 5s linear infinite',
             textShadow: '0 20px 40px rgba(0,0,0,0.5)',
           }}>
             {t('homeWelcome')}
           </h1>
-          
-          <p style={{ 
-            fontSize: '1.6rem', 
-            color: '#a0c4e8', 
-            marginBottom: '40px', 
-            fontWeight: '300', 
-            letterSpacing: '1px' 
+
+          <p style={{
+            fontSize: 'clamp(1rem, 1.8vw, 1.35rem)',
+            color: '#a0c4e8',
+            margin: 0,
+            fontWeight: '300',
+            letterSpacing: '1px'
           }}>
             {t('explorerBrandSub')}
           </p>
         </div>
 
         {/* Language Selector in 3D Space */}
-        <div style={{ 
-          display: 'flex', gap: '15px', marginBottom: '60px', flexWrap: 'wrap',
+        <div style={{
+          display: 'flex', gap: '12px', flexWrap: 'wrap',
           transform: 'translateZ(40px)',
           animation: 'slide-up-stagger 1s cubic-bezier(0.16, 1, 0.3, 1) forwards',
           animationDelay: '0.15s', opacity: 0
@@ -192,23 +195,23 @@ export function HomeOverlay() {
         </div>
 
         {/* Steps Grid */}
-        <div style={{ 
-          width: '100%', marginBottom: '60px',
+        <div style={{
+          width: '100%',
           transform: 'translateZ(30px)',
           animation: 'slide-up-stagger 1s cubic-bezier(0.16, 1, 0.3, 1) forwards',
           animationDelay: '0.3s', opacity: 0
         }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {[
               { icon: <IconGlobe />, text: t('homeStep1'), num: '01' },
               { icon: <IconLayers />, text: t('homeStep2'), num: '02' },
               { icon: <IconSliders />, text: t('homeStep3'), num: '03' },
             ].map((step, idx) => (
-              <div key={idx} style={{ 
-                background: 'rgba(255, 255, 255, 0.02)', 
+              <div key={idx} style={{
+                background: 'rgba(255, 255, 255, 0.02)',
                 borderLeft: '2px solid rgba(255, 255, 255, 0.1)',
-                padding: '20px 30px',
-                display: 'flex', alignItems: 'center', gap: '25px',
+                padding: '14px 22px',
+                display: 'flex', alignItems: 'center', gap: '20px',
                 transition: 'all 0.3s ease',
                 cursor: 'default',
                 position: 'relative',
@@ -250,8 +253,8 @@ export function HomeOverlay() {
               background: 'transparent',
               color: '#00d4ff',
               border: '2px solid #00d4ff',
-              padding: '20px 60px',
-              fontSize: '18px',
+              padding: '15px 44px',
+              fontSize: '15px',
               fontWeight: '700',
               textTransform: 'uppercase',
               letterSpacing: '3px',
