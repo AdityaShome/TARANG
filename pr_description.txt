@@ -1,0 +1,207 @@
+## 🌊 TARANG — Full Session PR: End-to-End 3D Ocean Platform for SIH 2026
+
+**Branch:** `feature/full-platform`  
+**Problem Statement:** SIH 2026 · PS #26067 · Ministry of Earth Sciences (MoES) / INCOIS  
+**Theme:** Smart Automation · Category: Software
+
+---
+
+### 🎯 Overview
+
+This PR represents the **complete implementation of the TARANG ocean visualization platform** — a browser-native, WebGL2-powered, real-time 3D oceanographic explorer built for Smart India Hackathon 2026. Over the course of this session we've gone from zero mocks to a fully production-grade platform capable of rendering live Copernicus Marine data in 3D with isosurface extraction, eddy detection, AI copilot, multilingual support, a cinematic 3D landing page, and now a blazing-fast B2-backed cache streaming system.
+
+---
+
+### ✅ What Has Been Built — Feature by Feature
+
+---
+
+#### 1. 🏛️ Core Architecture (Zero-Mock, Cloud-Native)
+
+- **`DataSourceAdapter` abstract pattern** — all data sources implement a single interface (`open()`, `get_slice()`, `get_volume()`). Adding a new variable = adding a new YAML manifest. Zero new endpoints needed.
+- **CF Convention compliance end-to-end** — `standard_name`, `units`, `missing_value`, `valid_min/max`, `depth_levels` carried from file to frontend shader uniform. Never hardcoded.
+- **Non-uniform depth levels** — the real ocean has non-uniform depth spacing (0.5 → 5727m). The depth slider indexes into an explicit `depth_levels[]` array. Nearest-neighbor snapping on the backend.
+- **Binary wire format** — every data response is `[uint32 header_len][JSON header][float32 body]`, not JSON. Keeps payload small, parses directly into `Float32Array` for GPU upload without any intermediate copies.
+- **Redis caching layer** — `slice:` keys with 5 min TTL, `volume:` with 10 min TTL. Hot timeline scrubbing feels instant. Graceful degradation when Redis is absent.
+
+---
+
+#### 2. 🌐 Live Data Ingestion — Real Copernicus Marine / OPeNDAP
+
+- **Copernicus Marine `copernicusmarine.subset()`** — Live temperature (`thetao`) and salinity (`so`) from `GLOBAL_ANALYSISFORECAST_PHY_001_024`. Bbox-scoped fetches triggered on demand.
+- **Grid-cell tile cache** — 20°×20° tiles cached locally. On re-query, the backend stitches tiles instead of re-downloading (zero network call in the common case).
+- **Concurrency lock per bbox** — `_live_fetch_locks` serializes duplicate simultaneous requests so only one hits Copernicus.
+- **HYCOM OPeNDAP stream** — US Navy HYCOM `GLBy0.08/expt_93.0` connected for backup/secondary streaming. `drop_variables: [tau]` handles the Navy's malformed time metadata.
+- **Argo float live integration** — `argopy 1.4.0` fetches real float profiles on demand. Local `.nc` cache checked first (§20 Rule 8), falls back to live Argo GDAC.
+- **Mock removal** — deleted `generate_fixtures.py`, `generate_hf_radar_fixture.py`, all `.nc`/`.csv` mock files, and the `mock_bgc_chlorophyll`, `hf_radar_currents`, `hycom_bob` YAML registries. The platform is **100% real data**.
+
+---
+
+#### 3. ⚡ Hyper-Fast B2 Cache Streaming (NEW — this session)
+
+- **Zero-download byte-range streaming** — 5GB of pre-warmed Copernicus NetCDF tiles live on a Backblaze B2 bucket (`tarang-cache`). Instead of downloading them, the backend uses `rclone serve http` + `xarray.open_dataset(url, engine='h5netcdf')` to stream only the bytes needed for the current bounding box via HTTP range requests.
+- **`start_cache.bat`** — one-click script to start the local `rclone` HTTP proxy. No WinFsp/FUSE required on Windows.
+- **`mode` query parameter** — every data endpoint now accepts `?mode=live|cached`. Live → Copernicus real-time. Cached → B2 byte-range stream (instantaneous for previously warmed regions).
+- **Cache key isolation** — Redis keys are namespaced by mode (e.g., `slice:...:cached` vs `slice:...:live`) so live and cached data never collide.
+- **Frontend Live/Cached toggle** — two hyper-styled buttons in the Control Panel (`🔴 LIVE` with red glow, `⚡ CACHED` with cyan glow). Wired all the way through the Zustand store → API client → FastAPI endpoints → NetCDF adapter.
+
+**Files modified:** `netcdf_adapter.py`, `base.py`, `cache.py`, `volume.py`, `slice_.py`, `isosurface.py`, `profile.py`, `store.ts`, `client.ts`, `ControlPanel.tsx`
+
+---
+
+#### 4. 🎨 3D WebGL Rendering Engine
+
+- **Depth-slice layer** (`DepthSliceLayer.ts`) — 2D texture, full globe-surface rendering with land masking via shader `discard`.
+- **Volume raymarching layer** (`OceanCubeLayer.ts`) — Custom vertex/fragment GLSL shaders (`oceanCubeVert.glsl`, `oceanCubeFrag.glsl`). Raymarches a 3D `Float32Array` uploaded as a `THREE.Data3DTexture`. Full depth column rendered as a semi-transparent 3D cube with configurable opacity, vertical exaggeration (50×), and colormap.
+- **Isosurface layer** — Server-side Marching Cubes (`skimage.measure.marching_cubes`, Lewiner 2003). Verts/faces/normals streamed as multipart binary, uploaded directly to `THREE.BufferGeometry`.
+- **Ocean Cube workspace** — dedicated `VolumeWorkspace.tsx` scene for immersive volumetric exploration.
+- **Colormaps** — Viridis, Plasma, Magma, Inferno, Turbo, RdBu. Implemented as a 1D lookup texture in GLSL. Log/linear scale, configurable min/max, auto-stretch from real data.
+- **Land masking** — missing value passed as a shader uniform. Pixels where `data == missing_value` are discarded in the fragment shader, revealing the 3D globe underneath.
+- **Post-processing pipeline** — `THREE.EffectComposer` with `UnrealBloomPass`, `RenderPass`, `SMAAPass`. Shared renderer singleton across all layers.
+- **Auto-rotate globe** — `OrbitControls` auto-rotation at 4× speed on the landing page, restored to user control when entering the console.
+
+---
+
+#### 5. 🌀 Eddy Detection Layer
+
+- **Backend `eddy.py`** — Detects mesoscale ocean eddies using SSH + velocity curl fields from Copernicus.
+- **Frontend `EddyOverlayLayer.ts`** — renders animated cyclonic/anticyclonic eddy markers on the globe surface.
+- **Eddy client `eddy.ts`** — typed fetch with deduplication.
+
+---
+
+#### 6. 🤖 AI Ocean Copilot
+
+- **`copilot.py` endpoint** — `/api/copilot` accepts plain-language queries about the ocean state.
+- **Context injection** — the copilot receives the current viewport bbox, active variable, depth, time step, and CF metadata as structured context before answering.
+- **Frontend chat panel** — integrated into the Forecaster Console sidebar.
+
+---
+
+#### 7. 🌍 Multilingual Support (5 Languages)
+
+- `frontend/src/i18n/translations.ts` — full translation table for **English, Hindi (हिंदी), Bengali (বাংলা), Telugu (తెలుగు), Tamil (தமிழ்)**.
+- `useT()` hook — typed translation lookup with fallback to English.
+- Language persisted to `localStorage`.
+- Every label in the Control Panel, legend, glossary, and status bar is translated.
+
+---
+
+#### 8. 🏠 Hyper-3D Cinematic Landing Page
+
+- **`HomeOverlay.tsx`** — full-screen landing page rendered over the live rotating 3D globe.
+- **Mouse-reactive 3D perspective** — the HUD panel responds to mouse position with `rotateX/Y` CSS 3D transforms, giving a parallax depth effect.
+- **Animated particle field** — JS canvas-based starfield rendered behind the UI.
+- **CRT scanline effect** — subtle animated scanlines via a pseudo-element overlay.
+- **Glassmorphism UI cards** — feature cards for "3D Ocean Mapping", "Live Data", "Scientific Analysis", "Real-time Monitoring".
+- **Cinematic auto-rotate** — the globe spins at 4× speed while on the landing page. Drops to normal when you click "Enter".
+- **UI isolation** — all sidebar/legend/control UI is hidden while the landing overlay is active (`showHomeOverlay` flag in store + `ForecasterConsole` conditionals).
+
+---
+
+#### 9. 📐 OGC WMS/WCS Endpoints
+
+- **`/wms`** — `GetMap` tile endpoint returning PNG slices compatible with any OGC WMS client (QGIS, Leaflet, OpenLayers).
+- **`/wcs`** — `GetCoverage` subset endpoint returning CF-compliant NetCDF subsets.
+- **THREDDS integration** — `thredds/` directory with THREDDS Data Server catalog configured for the backend datasets.
+
+---
+
+#### 10. 🐳 Docker / Infrastructure
+
+- **`Dockerfile.backend`** — multi-stage build, installs `netCDF4`, `h5netcdf`, `scipy`, `skimage`, `argopy`, `copernicusmarine`, `openai`, `redis-py`.
+- **`docker-compose.yml`** — orchestrates `backend`, `frontend` (Vite dev server), `redis`, and `nginx` (reverse proxy).
+- **Nginx config** — proxies `/api` to FastAPI, serves static Vite build, sets `Access-Control-Allow-Origin`.
+- **`docker-compose.option-b.yml`** — alternative compose for deployments without Docker-in-Docker.
+- **`Dockerfile.backend`** S3 pool widened to 50 connections for bursty rendering traffic.
+
+---
+
+#### 11. 🔭 Instrument Overlay — Argo Floats & Gliders
+
+- **`/api/instruments`** endpoint — returns instrument positions within a bbox.
+- **Profile popover** — click any Argo float/glider marker → depth-vs-temperature/salinity chart appears.
+- **Model-vs-observation delta** — the profile endpoint optionally computes `delta_temperature` / `delta_salinity` by sampling the active model grid cell at the float's lat/lon.
+
+---
+
+#### 12. 📊 Glossary & Dataset Link Tables
+
+- **`GlossaryPanel.tsx`** — searchable glossary of ocean science terms (thermocline, pycnocline, mesoscale eddy, etc.) with units and descriptions.
+- All CF-standard variable names, units, and dataset DOIs are surfaced in the UI.
+
+---
+
+#### 13. 🗂️ Registry-Driven YAML Architecture
+
+All data sources are described in YAML manifests in `/registry/`:
+- `hycom_water_temp.yaml` — live Copernicus temperature + B2 cache tile config
+- `hycom_salinity.yaml` — live Copernicus salinity + HYCOM OPeNDAP fallback
+- Variable, units, depth_levels, live_dataset_id, local_cache, local_cache_bbox — all in YAML
+- Hot-reload watcher: modifying a YAML file re-registers the source without restarting the server.
+
+---
+
+### 📁 Changed Files Summary
+
+| Area | Files |
+|---|---|
+| **Backend Adapters** | `base.py`, `netcdf_adapter.py`, `argo_adapter.py` |
+| **Backend Endpoints** | `slice_.py`, `volume.py`, `isosurface.py`, `profile.py`, `eddy.py`, `copilot.py`, `delta.py`, `metadata.py`, `instruments.py`, `metrics.py` |
+| **Backend Core** | `cache.py`, `main.py` |
+| **Frontend State** | `store.ts` (added `dataSourceMode`, `showHomeOverlay`, `language`, `mapSelectMode`) |
+| **Frontend API** | `client.ts` (mode param in all fetch calls), `eddy.ts`, `delta.ts` |
+| **Frontend Components** | `HomeOverlay.tsx` (new 3D landing page), `GlossaryPanel.tsx`, `ControlPanel.tsx` |
+| **Frontend Scene** | `SceneManager.tsx`, layers (`DepthSliceLayer`, `VolumeLayer`, `IsosurfaceLayer`, `EddyOverlayLayer`, `DeltaOverlayLayer`) |
+| **Frontend Shaders** | `colormapFrag.glsl`, `oceanCubeFrag.glsl`, `oceanCubeVert.glsl`, `workspaceVolumeFrag.glsl` |
+| **i18n** | `translations.ts` (EN/HI/BN/TE/TA), `useT.ts` |
+| **Registry** | `hycom_water_temp.yaml`, `hycom_salinity.yaml` |
+| **Infrastructure** | `Dockerfile.backend`, `nginx.conf`, `docker-compose.yml` |
+| **Scripts** | `start_cache.bat` |
+
+---
+
+### 🧪 Testing Notes
+
+- **Vite build**: passes with no type errors (strict mode)
+- **Backend imports**: all endpoints import cleanly; `mode` defaults to `"live"` everywhere so existing behaviour is unchanged
+- **B2 streaming**: verified via `xarray.open_dataset('http://127.0.0.1:8080/live_thetao_100.0_20.0_120.0_40.0.nc')` → full `thetao` Dataset opened in <1s
+- **Redis graceful degradation**: tested with `REDIS_URL` unset — cache disabled, every request recomputes, no crash
+- **No mocks**: `grep -r "mock" registry/` → zero hits for active YAML files
+
+---
+
+### 📸 Impact for SIH 2026 Judges
+
+| PS Criterion | Status |
+|---|---|
+| 3D volumetric rendering (temp/salinity) | ✅ Raymarching + depth-slice + isosurface |
+| Depth-slice, isosurface, time animation | ✅ All three render modes, play/pause timeline |
+| Argo/Glider/CTD overlay + click-inspect | ✅ Live argopy data, profile popover chart |
+| Multi-format ingestion (NetCDF, ASCII) | ✅ NetCDFAdapter + DelimitedTextAdapter |
+| OGC WMS/WCS + CF Conventions | ✅ `/wms`, `/wcs`, CF attrs end-to-end |
+| Extensible plugin architecture | ✅ YAML manifest + adapter pattern |
+| Public outreach mode | ✅ Cinematic 3D landing page + multilingual UI |
+| Real-time, cloud-native, no local install | ✅ Copernicus live + B2 cache streaming |
+
+---
+
+### 🚀 How to Run
+
+```bash
+# Start full stack
+docker compose up
+
+# Start B2 cache server (for Cached mode)
+start_cache.bat
+
+# Frontend dev
+cd frontend && npm run dev
+
+# Backend dev
+uvicorn backend.app.main:app --reload
+```
+
+---
+
+*Built with: FastAPI · xarray · Three.js · WebGL2 · Zustand · React · Copernicus Marine · Backblaze B2 · rclone · argopy · scikit-image · Redis*

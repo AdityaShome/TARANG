@@ -35,6 +35,7 @@ export function ForecasterConsole() {
   const t = useT()
   const [showGlossary, setShowGlossary] = useState(false)
 
+  const showHomeOverlay = useTarangStore(s => s.showHomeOverlay)
   // Volume/Iso open a dedicated 3D depth workspace instead of rendering on the globe (Slice
   // stays on the globe, unchanged). Only once a region exists — before that there's nothing to
   // show; closing returns to 'slice' so the globe/search view is always what's left underneath.
@@ -45,7 +46,7 @@ export function ForecasterConsole() {
       {/* ── View: 2D India map, or the 3D globe ─────────────────────── */}
       <div style={styles.sceneWrapper}>
         {viewScope === 'india' ? <IndiaMapView /> : <SceneManager />}
-        {!hasSearchedRegion && (
+        {!hasSearchedRegion && !showHomeOverlay && (
           <div id="search-hint" style={styles.searchHint}>
             {t('searchHint')}
           </div>
@@ -60,87 +61,90 @@ export function ForecasterConsole() {
         )}
       </div>
 
-      {/* ── AI Ocean Copilot ─────────────────────────────────────────── */}
-      <OceanCopilot />
+      {!showHomeOverlay && (
+        <>
+          {/* ── AI Ocean Copilot ─────────────────────────────────────────── */}
+          <OceanCopilot />
 
-      {/* ── Control Sidebar ──────────────────────────────────────────── */}
-      <aside id="control-panel" style={styles.sidebar}>
-        <div style={styles.brandHeader}>
-          <div style={styles.brandRow}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={styles.brandText}>TARANG</span>
-              <button 
-                onClick={() => setShowGlossary(true)}
-                style={{ background: 'rgba(0, 212, 255, 0.1)', border: '1px solid rgba(0, 212, 255, 0.3)', color: '#00d4ff', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '12px' }}
-                title="Glossary"
+          {/* ── Control Sidebar ──────────────────────────────────────────── */}
+          <aside id="control-panel" style={styles.sidebar}>
+            <div style={styles.brandHeader}>
+              <div style={styles.brandRow}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={styles.brandText}>TARANG</span>
+                  <button 
+                    onClick={() => setShowGlossary(true)}
+                    style={{ background: 'rgba(0, 212, 255, 0.1)', border: '1px solid rgba(0, 212, 255, 0.3)', color: '#00d4ff', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '12px' }}
+                    title="Glossary"
+                  >
+                    ?
+                  </button>
+                </div>
+                <LanguageSwitcher />
+              </div>
+
+              <span style={styles.brandSub}>{t('brandSub')}</span>
+            </div>
+
+            <SearchBar />
+            <ControlPanel />
+
+            {/* ── View scope: India (default, primary) vs. the full Globe ── */}
+            <div style={styles.scopeToggle} role="group" aria-label="View scope">
+              <button
+                id="view-scope-india"
+                style={{ ...styles.scopeBtn, ...(viewScope === 'india' ? styles.scopeBtnActive : {}) }}
+                onClick={() => setViewScope('india')}
+                title="Arabian Sea + Bay of Bengal — the primary demo view"
               >
-                ?
+                India
+              </button>
+              <button
+                id="view-scope-globe"
+                style={{ ...styles.scopeBtn, ...(viewScope === 'globe' ? styles.scopeBtnActive : {}) }}
+                onClick={() => setViewScope('globe')}
+                title="Full rotating globe — search any sea worldwide"
+              >
+                Globe
               </button>
             </div>
-            <LanguageSwitcher />
-          </div>
 
-          <span style={styles.brandSub}>{t('brandSub')}</span>
-        </div>
+            {/* Mode switch button */}
+            <button
+              id="switch-to-explorer"
+              style={styles.modeBtn}
+              onClick={() => setUIMode('explorer')}
+            >
+              ✦ {t('explorerModeBtn')}
+            </button>
 
-        {/* ── View scope: India (default, primary) vs. the full Globe ── */}
-        <div style={styles.scopeToggle} role="group" aria-label="View scope">
-          <button
-            id="view-scope-india"
-            style={{ ...styles.scopeBtn, ...(viewScope === 'india' ? styles.scopeBtnActive : {}) }}
-            onClick={() => setViewScope('india')}
-            title="Arabian Sea + Bay of Bengal — the primary demo view"
-          >
-            India
-          </button>
-          <button
-            id="view-scope-globe"
-            style={{ ...styles.scopeBtn, ...(viewScope === 'globe' ? styles.scopeBtnActive : {}) }}
-            onClick={() => setViewScope('globe')}
-            title="Full rotating globe — search any sea worldwide"
-          >
-            Globe
-          </button>
-        </div>
+            {/* Attribution (§17 — dataset licensing) */}
+            <div style={styles.attribution}>
+              Data: HYCOM · Argo GDAC · INCOIS
+              <br />
+              SIH 2026 · PS 26067
+            </div>
+          </aside>
 
-        <SearchBar />
+          {/* ── Profile Popover (visible when a float is selected) ───────── */}
+          {selectedPlatformId && (
+            <ProfilePopover platformId={selectedPlatformId} />
+          )}
 
-        <ControlPanel />
+          {/* ── Thermal Legend (hidden while the slice overlay has no data to describe) ── */}
+          {!(regionDataMissing && renderMode === 'slice') && <Legend />}
 
-        {/* Mode switch button */}
-        <button
-          id="switch-to-explorer"
-          style={styles.modeBtn}
-          onClick={() => setUIMode('explorer')}
-        >
-          ✦ {t('explorerModeBtn')}
-        </button>
+          {/* ── Glossary Panel ────────────────────────────────────────────── */}
+          {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
 
-        {/* Attribution (§17 — dataset licensing) */}
-        <div style={styles.attribution}>
-          Data: HYCOM · Argo GDAC · INCOIS
-          <br />
-          SIH 2026 · PS 26067
-        </div>
-      </aside>
-
-      {/* ── Profile Popover (visible when a float is selected) ───────── */}
-      {selectedPlatformId && (
-        <ProfilePopover platformId={selectedPlatformId} />
-      )}
-
-      {/* ── Thermal Legend (hidden while the slice overlay has no data to describe) ── */}
-      {!(regionDataMissing && renderMode === 'slice') && <Legend />}
-      
-      {/* ── Glossary Panel ────────────────────────────────────────────── */}
-      {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
-
-      {/* ── Volume/Isosurface 3D Depth Workspace ─────────────────────── */}
-      {showVolumeIsoWorkspace && (
-        <VolumeIsoWorkspace
-          mode={renderMode as 'volume' | 'isosurface'}
-          onClose={() => setRenderMode('slice')}
-        />
+          {/* ── Volume/Isosurface 3D Depth Workspace ─────────────────────── */}
+          {showVolumeIsoWorkspace && (
+            <VolumeIsoWorkspace
+              mode={renderMode as 'volume' | 'isosurface'}
+              onClose={() => setRenderMode('slice')}
+            />
+          )}
+        </>
       )}
     </div>
   )

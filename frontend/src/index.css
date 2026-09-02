@@ -65,6 +65,34 @@ button { font-family: var(--font-main); }
 
 .fade-in { animation: fadeIn 0.4s ease forwards; }
 
+@keyframes slideUp {
+  0% { opacity: 0; transform: translateY(30px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0% { opacity: 0.5; transform: translate(-50%, -50%) scale(0.9); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+}
+
+@keyframes float-aurora {
+  0% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  33% { transform: translate(50px, -50px) rotate(120deg) scale(1.1); }
+  66% { transform: translate(-30px, 40px) rotate(240deg) scale(0.9); }
+  100% { transform: translate(0, 0) rotate(360deg) scale(1); }
+}
+
+@keyframes gradient-text-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes slide-up-stagger {
+  0% { opacity: 0; transform: translateY(40px) scale(0.95); filter: blur(10px); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0px); }
+}
+
 /* Spinner (VolumeIsoWorkspace loading state) */
 @keyframes tarang-spin {
   to { transform: rotate(360deg); }

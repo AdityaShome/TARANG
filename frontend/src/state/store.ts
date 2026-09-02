@@ -72,10 +72,15 @@ interface TarangState {
   language:   LanguageCode
   isLoading:  boolean
   error:      string | null
+  showHomeOverlay: boolean
   // Distinct from isLoading (which specifically gates the source-switch race in
   // SceneManager.tsx) — this just reflects whether a data-layer fetch is currently in flight,
   // for UI feedback (e.g. SearchBar's "fetching live data…" spinner after a region search).
+  // for UI feedback (e.g. SearchBar's "fetching live data…" spinner after a region search).
   isFetchingLayers: boolean
+
+  // Data Source Mode (live from copernicus vs fast byte-range stream from B2 cache)
+  dataSourceMode: 'live' | 'cached'
 
   // Source selection
   sources:         SourceEntry[]
@@ -129,6 +134,7 @@ interface TarangState {
   // ── Actions ───────────────────────────────────────────────────────────────
   setUIMode:           (mode: UIMode)          => void
   setLanguage:         (lang: LanguageCode)    => void
+  setDataSourceMode:   (mode: 'live' | 'cached') => void
   setActiveSource:     (id: string)            => void
   setActiveVar:        (variable: string)      => void
   setVariableMeta:     (vars: string[], cf: CFMetaMap) => void
@@ -151,6 +157,7 @@ interface TarangState {
   setLoading:          (v: boolean)            => void
   setFetchingLayers:   (v: boolean)            => void
   setError:            (e: string | null)      => void
+  setShowHomeOverlay:  (v: boolean)            => void
   toggleLayer:         (id: string)            => void
 
   // Derived helpers
@@ -166,7 +173,9 @@ export const useTarangStore = create<TarangState>()(
     language:            loadStoredLanguage(),
     isLoading:           false,
     isFetchingLayers:    false,
+    dataSourceMode:      'live',
     error:               null,
+    showHomeOverlay:     true,
 
     sources:             [],
     activeSourceId:      'copernicus_marine',
@@ -196,10 +205,12 @@ export const useTarangStore = create<TarangState>()(
       slice:      true,
       volume:     false,
       isosurface: false,
+      cube:       false,
       markers:    true,
       vectors:    false,
       eddy:       false,
       fronts:     false,
+      delta:      false,
     },
 
     // ── Actions ───────────────────────────────────────────────────────────────
@@ -208,6 +219,7 @@ export const useTarangStore = create<TarangState>()(
       try { localStorage.setItem(LANGUAGE_STORAGE_KEY, lang) } catch { /* private mode — non-fatal */ }
       set({ language: lang })
     },
+    setDataSourceMode:   (mode)    => set({ dataSourceMode: mode }),
     // Clear activeVar + the var list so nothing briefly names a variable from the old source;
     // App.tsx re-fetches metadata and calls setActiveVar with the right name.
     setActiveSource:     (id)      => set({
@@ -261,6 +273,7 @@ export const useTarangStore = create<TarangState>()(
         slice:      mode === 'slice',
         volume:     mode === 'volume',
         isosurface: mode === 'isosurface',
+        cube:       mode === 'cube',
       },
     })),
     setIsoThreshold:     (v)       => set({ isoThreshold: v }),
@@ -271,6 +284,7 @@ export const useTarangStore = create<TarangState>()(
     setLoading:          (v)       => set({ isLoading: v }),
     setFetchingLayers:   (v)       => set({ isFetchingLayers: v }),
     setError:            (e)       => set({ error: e }),
+    setShowHomeOverlay:  (v)       => set({ showHomeOverlay: v }),
     toggleLayer:         (id)      => set(s => ({
       layerVisibility: { ...s.layerVisibility, [id]: !s.layerVisibility[id] }
     })),

@@ -65,6 +65,7 @@ async def get_isosurface(
     threshold: float = Query(..., description="Isosurface level in variable's units"),
     time:      int   = Query(0),
     bbox:      str   = Query("80,5,100,25"),
+    mode:      str   = Query("live"),
 ):
     registry = request.app.state.registry
     cache    = request.app.state.cache
@@ -79,17 +80,18 @@ async def get_isosurface(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    key = cache.isosurface_key(source, var, threshold, time, bbox_tuple)
+    key = cache.isosurface_key(source, var, threshold, time, bbox_tuple, mode)
 
     async def compute() -> bytes:
         from skimage import measure
+        from backend.app.endpoints.volume import _data_executor
 
         loop = asyncio.get_running_loop()
 
         # 1. Fetch volume (checks its own cache)
         vol_result = await loop.run_in_executor(
-            None,
-            lambda: adapter.get_volume(var, time, bbox_tuple)
+            _data_executor,
+            lambda: adapter.get_volume(var, time, bbox_tuple, mode)
         )
         volume = vol_result.data  # (depth, lat, lon) float32
 

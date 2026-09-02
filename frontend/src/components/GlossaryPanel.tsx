@@ -42,8 +42,11 @@ const GLOSSARY_TERMS = [
   { term: 'API', def: 'Application Programming Interface' }
 ]
 
+import { useTarangStore } from '../state/store'
+
 export function GlossaryPanel({ onClose }: { onClose: () => void }) {
   const [search, setSearch] = useState('')
+  const sources = useTarangStore(s => s.sources)
 
   const filtered = GLOSSARY_TERMS.filter(item => 
     item.term.toLowerCase().includes(search.toLowerCase()) || 
@@ -67,6 +70,28 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
         />
         
         <div style={styles.list}>
+          {sources.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ color: '#00d4ff', fontSize: '15px', fontWeight: '600', marginBottom: '10px', borderBottom: '1px solid rgba(0, 180, 255, 0.2)', paddingBottom: '4px' }}>
+                Active Datasets (Data Provenance)
+              </div>
+              {sources.map(s => (
+                <div key={s.id} style={{ ...styles.item, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={styles.term}>{s.label}</div>
+                  <div style={styles.def}>Registry ID: <code>{s.id}</code></div>
+                  <div style={styles.def}>
+                    <a href={`http://localhost:8080/thredds/catalog/tarang/catalog.html`} target="_blank" rel="noreferrer" style={{ color: '#00d4ff', textDecoration: 'none' }}>
+                      [View on THREDDS]
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ color: '#00d4ff', fontSize: '15px', fontWeight: '600', marginBottom: '10px', borderBottom: '1px solid rgba(0, 180, 255, 0.2)', paddingBottom: '4px' }}>
+            Acronyms & Terms
+          </div>
           {filtered.map(item => (
             <div key={item.term} style={styles.item}>
               <div style={styles.term}>{item.term}</div>

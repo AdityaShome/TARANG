@@ -10,8 +10,10 @@ label: "HYCOM — Water Temperature"
 description: "Sea water temperature at depth from HYCOM GLBy0.08 experiment 93.0 (global 1/12°, 40 depth levels 0–5000 m)"
 
 adapter: NetCDFAdapter
-source: "http://thredds:8080/thredds/dodsC/netcdf/hycom_water_temp.nc"
+source: "http://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0"
 local_cache: "data/netcdf/hycom_water_temp.nc"
+local_cache_bbox: [80, 5, 100, 25]   # Bay of Bengal — requests outside go to live OPeNDAP
+decode_times: false
 variable: water_temp
 standard_name: sea_water_temperature
 long_name: "Water Temperature"

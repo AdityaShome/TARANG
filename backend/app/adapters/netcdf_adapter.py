@@ -129,6 +129,7 @@ class NetCDFAdapter(DataSourceAdapter):
     def __init__(self, manifest: dict):
         super().__init__(manifest)
         self._depth_levels: list[float] = manifest.get("depth_levels") or []
+        self._decode_times: bool = manifest.get("decode_times", True)
         self._ds: xr.Dataset | None = None  # lazy-opened dataset
 
     # ── Internal: does the local cache actually cover this request? ────────────
@@ -171,7 +172,7 @@ class NetCDFAdapter(DataSourceAdapter):
                         source,
                         engine=engine,
                         mask_and_scale=True,
-                        decode_times=True,
+                        decode_times=self._decode_times,
                         # No chunks parameter, let xarray manage memory without dask
                     )
                     logger.info(f"Opened with engine '{engine}': {list(ds.data_vars)}")
@@ -216,15 +217,32 @@ class NetCDFAdapter(DataSourceAdapter):
         return cache_dir / f"{key}.nc"
 
     def _open_live_copernicus(
-        self, bbox: tuple[float, float, float, float], allow_fetch: bool = True
+        self, bbox: tuple[float, float, float, float], mode: str = "live", allow_fetch: bool = True
     ) -> xr.Dataset:
         """Bbox-scoped fetch from Copernicus Marine via subset() (far faster than lazy zarr here).
 
-        allow_fetch=False → cache-only: reuse anything already in live_cache/ (grid-cell stitch
-        or an exact-bbox file), but raise instead of hitting the network. Used by OFFLINE_MODE so
-        a region fetched in a previous online session keeps working with no connectivity.
+        mode="cached" → read pre-warmed cells over local HTTP byte-range (the B2 landing-page path).
+        allow_fetch=False → cache-only: reuse anything already in live_cache/ (grid-cell stitch or
+        an exact-bbox file), but raise instead of hitting the network. Used by OFFLINE_MODE so a
+        region fetched in a previous online session keeps working with no connectivity.
         """
         from datetime import datetime, timedelta
+
+        if mode == "cached":
+            # Direct HTTP Byte-Range Streaming via xarray + h5netcdf
+            covering_cells = _grid_cells_covering(bbox)
+            datasets = []
+            with _NETCDF_IO_LOCK:
+                for c in covering_cells:
+                    clon, clat = c
+                    key = f"live_{self.variable}_{clon:.1f}_{clat:.1f}_{clon + _GRID_SIZE_DEG:.1f}_{clat + _GRID_SIZE_DEG:.1f}"
+                    url = f"http://127.0.0.1:8080/{key}.nc"
+                    logger.info(f"Opening super-fast cached B2 data over HTTP: {url}")
+                    ds = xr.open_dataset(url, engine="h5netcdf", mask_and_scale=True, decode_times=self._decode_times)
+                    datasets.append(ds)
+            if len(datasets) == 1:
+                return datasets[0]
+            return xr.combine_by_coords(datasets, combine_attrs="override")
 
         cache_dir = Path("data/netcdf/live_cache")
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -335,9 +353,17 @@ class NetCDFAdapter(DataSourceAdapter):
             )
         return self._open_local_or_configured_url(use_local=False, override_path=str(cache_file))
 
-    def open(self, bbox: tuple[float, float, float, float] | None = None) -> xr.Dataset:
-        """Open the dataset lazily. Never cached on self — xarray + netCDF4 isn't thread-safe,
-        so we open fresh on every request."""
+    def open(self, bbox: tuple[float, float, float, float] | None = None, mode: str = "live") -> xr.Dataset:
+        """
+        Open the data source lazily. Must use the local_cache path if it exists AND covers
+        `bbox` (§20 Rule 8 — cache before you query live). Falls back to a live, bbox-scoped
+        fetch (via live_dataset_id) or source_url otherwise.
+        Returns an xarray Dataset opened lazily (no data pulled yet).
+        """
+        if mode == "cached" and bbox is not None:
+            # Bypass all local checks and go straight to the B2 HTTP server
+            return self._open_live_copernicus(bbox, mode="cached")
+
         if self._local_cache_covers(bbox):
             return self._open_local_or_configured_url(use_local=True)
 
@@ -372,51 +398,64 @@ class NetCDFAdapter(DataSourceAdapter):
         """
         Return metadata dict driving all frontend selectors.
         CF metadata is sourced from the dataset — never hardcoded.
+
+        IMPORTANT: Always prefer the local cache for metadata. Metadata (variable
+        names, depth levels, units, CF attributes) is identical across all regions
+        for a given dataset — there's no reason to open a massive global OPeNDAP
+        endpoint just to read variable attributes. The local cache is fast (0.16s)
+        vs the global OPeNDAP which can take 12+ seconds just to open lazily.
         """
-        ds = self.open()   # not locked — may trigger a slow live fetch; see _NETCDF_IO_LOCK's comment
+        # Prefer local cache for metadata — it's fast and has the same CF attrs
+        if self.local_cache and Path(self.local_cache).exists():
+            ds = self._open_local_or_configured_url(use_local=True)
+        else:
+            ds = self.open()  # fallback to configured source
 
         with _NETCDF_IO_LOCK:
-            # Gather available variables (skip coordinate variables)
-            available_vars = []
-            cf_meta = {}
-            for vname in ds.data_vars:
-                var = ds[vname]
-                if var.attrs.get("standard_name") or var.attrs.get("long_name"):
-                    available_vars.append(vname)
-                    cf_meta[vname] = {
-                        "standard_name": var.attrs.get("standard_name", vname),
-                        "long_name":     var.attrs.get("long_name", vname),
-                        "units":         var.attrs.get("units", "unknown"),
-                        "valid_min":     float(var.attrs.get("valid_min", -9999)),
-                        "valid_max":     float(var.attrs.get("valid_max",  9999)),
-                        # xarray's mask_and_scale=True decode moves _FillValue out of .attrs into
-                        # .encoding — see the identical fix/comment in base.py's _extract_cf_meta,
-                        # which this duplicated (and inherited the same bug from).
-                        "missing_value": float(var.attrs.get("_FillValue", var.encoding.get("_FillValue", np.nan))),
+            try:
+                # Gather available variables (skip coordinate variables)
+                available_vars = []
+                cf_meta = {}
+                for vname in ds.data_vars:
+                    var = ds[vname]
+                    if var.attrs.get("standard_name") or var.attrs.get("long_name"):
+                        available_vars.append(vname)
+                        cf_meta[vname] = {
+                            "standard_name": var.attrs.get("standard_name", vname),
+                            "long_name":     var.attrs.get("long_name", vname),
+                            "units":         var.attrs.get("units", "unknown"),
+                            "valid_min":     float(var.attrs.get("valid_min", -9999)),
+                            "valid_max":     float(var.attrs.get("valid_max",  9999)),
+                            # xarray's mask_and_scale=True decode moves _FillValue out of .attrs into
+                            # .encoding — see the identical fix/comment in base.py's _extract_cf_meta,
+                            # which this duplicated (and inherited the same bug from).
+                            "missing_value": float(var.attrs.get("_FillValue", var.encoding.get("_FillValue", np.nan))),
+                        }
+
+                # Resolve actual depth levels from dataset, fallback to manifest
+                depth_levels = self._resolve_depth_levels(ds)
+
+                # Time range
+                time_range = {}
+                if "time" in ds.coords:
+                    times = ds.coords["time"].values
+                    time_range = {
+                        "start": str(times[0]),
+                        "end":   str(times[-1]),
+                        "steps": int(len(times)),
                     }
 
-            # Resolve actual depth levels from dataset, fallback to manifest
-            depth_levels = self._resolve_depth_levels(ds)
-
-            # Time range
-            time_range = {}
-            if "time" in ds.coords:
-                times = ds.coords["time"].values
-                time_range = {
-                    "start": str(times[0]),
-                    "end":   str(times[-1]),
-                    "steps": int(len(times)),
+                return {
+                    "source_id":          self.manifest["id"],
+                    "label":              self.manifest.get("label", self.manifest["id"]),
+                    "available_variables": available_vars,
+                    "cf_metadata":        cf_meta,
+                    "depth_levels":       depth_levels,  # non-uniform, explicit list
+                    "time_range":         time_range,
+                    "dimensions": {k: int(v) for k, v in ds.sizes.items()},
                 }
-
-            return {
-                "source_id":          self.manifest["id"],
-                "label":              self.manifest.get("label", self.manifest["id"]),
-                "available_variables": available_vars,
-                "cf_metadata":        cf_meta,
-                "depth_levels":       depth_levels,  # non-uniform, explicit list
-                "time_range":         time_range,
-                "dimensions": {k: int(v) for k, v in ds.sizes.items()},
-            }
+            finally:
+                ds.close()
 
     def get_slice(
         self,
@@ -424,156 +463,162 @@ class NetCDFAdapter(DataSourceAdapter):
         depth_m: float,
         time_idx: int,
         bbox: tuple[float, float, float, float],
+        mode: str = "live",
     ) -> SliceResult:
         """
         Fetch a 2D (lat, lon) depth-slice at the nearest actual depth level.
         ALL subsetting is done before .compute() — never loads the full grid.
         """
-        ds = self.open(bbox)   # not locked — may trigger a slow live fetch; see _NETCDF_IO_LOCK's comment
+        ds = self.open(bbox, mode=mode)   # not locked — may trigger a slow live fetch; see _NETCDF_IO_LOCK's comment
         min_lon, min_lat, max_lon, max_lat = bbox
 
         with _NETCDF_IO_LOCK:
-            lat_dim = "latitude" if "latitude" in ds.dims else "lat"
-            lon_dim = "longitude" if "longitude" in ds.dims else "lon"
-            # ── Subset to bbox first (smallest possible read) ──────────────────────
-            subset = ds[variable].sel(**{
-                lat_dim: slice(min_lat, max_lat),
-                lon_dim: slice(min_lon, max_lon),
-            })
+            try:
+                lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+                lon_dim = "longitude" if "longitude" in ds.dims else "lon"
+                # ── Subset to bbox first (smallest possible read) ──────────────────────
+                if variable not in ds.variables:
+                    variable = self.manifest.get("variable", list(ds.variables.keys())[0])
+                subset = ds[variable].sel(**{
+                    lat_dim: slice(min_lat, max_lat),
+                    lon_dim: slice(min_lon, max_lon),
+                })
 
-            # ── Select time step ──────────────────────────────────────────────────
-            if "time" in subset.dims:
-                # Live-fetched windows are now only 1 day wide (see _open_live_copernicus's
-                # comment) — often exactly 1 time step. A frontend scrub to an index beyond
-                # what's actually cached would otherwise raise a hard IndexError; clamp to the
-                # last available step instead, same spirit as the depth snap below.
-                n_time = subset.sizes["time"]
-                if time_idx >= n_time:
-                    logger.warning(
-                        f"get_slice: requested time_idx={time_idx} out of range "
-                        f"(only {n_time} step(s) available in this cached window) — "
-                        f"using the last available step instead."
-                    )
-                    time_idx = n_time - 1
-                subset = subset.isel(time=time_idx)
-                time_str = str(ds.coords["time"].values[time_idx])
-            else:
-                time_str = "static"
+                # ── Select time step ──────────────────────────────────────────────────
+                if "time" in subset.dims:
+                    # Live-fetched windows are now only 1 day wide (see _open_live_copernicus's
+                    # comment) — often exactly 1 time step. A frontend scrub to an index beyond
+                    # what's actually cached would otherwise raise a hard IndexError; clamp to the
+                    # last available step instead, same spirit as the depth snap below.
+                    n_time = subset.sizes["time"]
+                    if time_idx >= n_time:
+                        logger.warning(
+                            f"get_slice: requested time_idx={time_idx} out of range "
+                            f"(only {n_time} step(s) available in this cached window) — "
+                            f"using the last available step instead."
+                        )
+                        time_idx = n_time - 1
+                    subset = subset.isel(time=time_idx)
+                    time_str = str(ds.coords["time"].values[time_idx])
+                else:
+                    time_str = "static"
 
-            # ── Snap to nearest actual depth level (NON-UNIFORM — §8.1) ──────────
-            actual_depth_m = depth_m
-            if "depth" in subset.dims or "lev" in subset.dims:
-                depth_dim = "depth" if "depth" in subset.dims else "lev"
-                subset = subset.sel({depth_dim: depth_m}, method="nearest")
-                actual_depth_m = float(subset.coords[depth_dim].values)
-                # A live-fetched cache file only goes as deep as maximum_depth requested at
-                # fetch time (currently 100m — see _open_live_copernicus's comment). A big snap
-                # gap here means the requested depth wasn't actually available and this is
-                # silently returning the shallowest cached level instead — worth knowing about.
-                if abs(actual_depth_m - depth_m) > 50:
-                    logger.warning(
-                        f"get_slice: requested depth={depth_m}m snapped to {actual_depth_m}m "
-                        f"(gap={abs(actual_depth_m - depth_m):.0f}m) — the cached file for this "
-                        f"region likely doesn't extend that deep."
-                    )
+                # ── Snap to nearest actual depth level (NON-UNIFORM — §8.1) ──────────
+                actual_depth_m = depth_m
+                if "depth" in subset.dims or "lev" in subset.dims:
+                    depth_dim = "depth" if "depth" in subset.dims else "lev"
+                    subset = subset.sel({depth_dim: depth_m}, method="nearest")
+                    actual_depth_m = float(subset.coords[depth_dim].values)
+                    # A live-fetched cache file only goes as deep as maximum_depth requested at
+                    # fetch time (currently 100m — see _open_live_copernicus's comment). A big snap
+                    # gap here means the requested depth wasn't actually available and this is
+                    # silently returning the shallowest cached level instead — worth knowing about.
+                    if abs(actual_depth_m - depth_m) > 50:
+                        logger.warning(
+                            f"get_slice: requested depth={depth_m}m snapped to {actual_depth_m}m "
+                            f"(gap={abs(actual_depth_m - depth_m):.0f}m) — the cached file for this "
+                            f"region likely doesn't extend that deep."
+                        )
 
-            # ── Build CF metadata ─────────────────────────────────────────────────
-            depth_levels = self._resolve_depth_levels(ds)
-            meta = self._extract_cf_meta(ds, variable, depth_levels)
+                # ── Build CF metadata ─────────────────────────────────────────────────
+                depth_levels = self._resolve_depth_levels(ds)
+                meta = self._extract_cf_meta(ds, variable, depth_levels)
 
-            # ── Compute (pulls only the subset bytes) and replace NaNs ────────────
-            arr = subset.values.astype(np.float32)
-            # mask_and_scale=True replaces missing data with NaN. We must convert it back
-            # to a numerical value so WebGL can correctly compare and discard land pixels.
-            arr = np.nan_to_num(arr, nan=meta.missing_value)
+                # ── Compute (pulls only the subset bytes) and replace NaNs ────────────
+                arr = subset.values.astype(np.float32)
+                # mask_and_scale=True replaces missing data with NaN. We must convert it back
+                # to a numerical value so WebGL can correctly compare and discard land pixels.
+                arr = np.nan_to_num(arr, nan=meta.missing_value)
+                meta.bounds = {
+                    "lat": [float(min_lat), float(max_lat)],
+                    "lon": [float(min_lon), float(max_lon)],
+                    "depth": [float(actual_depth_m)],
+                }
 
-            # bounds = the extent the DATA ACTUALLY covers, not what was requested. When the
-            # local cache only partly covers the bbox (offline: a drag/click box spilling past
-            # the fixture), the returned grid is smaller than the request — labelling it with the
-            # requested min/max stretches the raster to fill the whole box and misaligns it with
-            # the coastline. The frontend places the overlay from these bounds, so they must be
-            # the real coord edges.
-            lat_c = ds.coords[lat_dim].sel(**{lat_dim: slice(min_lat, max_lat)}).values.astype(np.float32)
-            lon_c = ds.coords[lon_dim].sel(**{lon_dim: slice(min_lon, max_lon)}).values.astype(np.float32)
-            meta.bounds = {
-                "lat": [float(lat_c.min()), float(lat_c.max())] if lat_c.size else [float(min_lat), float(max_lat)],
-                "lon": [float(lon_c.min()), float(lon_c.max())] if lon_c.size else [float(min_lon), float(max_lon)],
-                "depth": [float(actual_depth_m)],
-            }
-
-            return SliceResult(
-                data=arr,
-                meta=meta,
-                lat=lat_c,
-                lon=lon_c,
-                depth_m=actual_depth_m,
-                time_str=time_str,
-            )
+                return SliceResult(
+                    data=arr,
+                    meta=meta,
+                    lat=ds.coords[lat_dim].sel(**{lat_dim: slice(min_lat, max_lat)}).values.astype(np.float32),
+                    lon=ds.coords[lon_dim].sel(**{lon_dim: slice(min_lon, max_lon)}).values.astype(np.float32),
+                    depth_m=actual_depth_m,
+                    time_str=time_str,
+                )
+            finally:
+                ds.close()
 
     def get_volume(
         self,
         variable: str,
         time_idx: int,
         bbox: tuple[float, float, float, float],
+        mode: str = "live",
     ) -> VolumeResult:
         """
         Fetch the full depth column as 3D (depth, lat, lon) for raymarching.
         This is the largest payload — cache aggressively in Redis.
         Downsamples if the regional cube exceeds GPU-safe resolution limits.
         """
-        ds = self.open(bbox)   # not locked — may trigger a slow live fetch; see _NETCDF_IO_LOCK's comment
+        ds = self.open(bbox, mode=mode)   # not locked — may trigger a slow live fetch; see _NETCDF_IO_LOCK's comment
         min_lon, min_lat, max_lon, max_lat = bbox
 
         with _NETCDF_IO_LOCK:
-            lat_dim = "latitude" if "latitude" in ds.dims else "lat"
-            lon_dim = "longitude" if "longitude" in ds.dims else "lon"
-            # ── bbox subset first ─────────────────────────────────────────────────
-            subset = ds[variable].sel(**{
-                lat_dim: slice(min_lat, max_lat),
-                lon_dim: slice(min_lon, max_lon),
-            })
+            try:
+                lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+                lon_dim = "longitude" if "longitude" in ds.dims else "lon"
+                # ── bbox subset first ─────────────────────────────────────────────────
+                if variable not in ds.variables:
+                    variable = self.manifest.get("variable", list(ds.variables.keys())[0])
+                subset = ds[variable].sel(**{
+                    lat_dim: slice(min_lat, max_lat),
+                    lon_dim: slice(min_lon, max_lon),
+                })
 
-            # ── time step ─────────────────────────────────────────────────────────
-            if "time" in subset.dims:
-                # See get_slice's identical comment — 1-day live windows may have only 1 step.
-                n_time = subset.sizes["time"]
-                if time_idx >= n_time:
-                    logger.warning(
-                        f"get_volume: requested time_idx={time_idx} out of range "
-                        f"(only {n_time} step(s) available in this cached window) — "
-                        f"using the last available step instead."
-                    )
-                    time_idx = n_time - 1
-                subset = subset.isel(time=time_idx)
-                time_str = str(ds.coords["time"].values[time_idx])
-            else:
-                time_str = "static"
+                # ── time step ─────────────────────────────────────────────────────────
+                if "time" in subset.dims:
+                    # See get_slice's identical comment — 1-day live windows may have only 1 step.
+                    n_time = subset.sizes["time"]
+                    if time_idx >= n_time:
+                        logger.warning(
+                            f"get_volume: requested time_idx={time_idx} out of range "
+                            f"(only {n_time} step(s) available in this cached window) — "
+                            f"using the last available step instead."
+                        )
+                        time_idx = n_time - 1
+                    subset = subset.isel(time=time_idx)
+                    time_str = str(ds.coords["time"].values[time_idx])
+                else:
+                    time_str = "static"
 
-            # ── Compute ───────────────────────────────────────────────────────────
-            arr = subset.values.astype(np.float32)  # (depth, lat, lon)
+                # ── Compute ───────────────────────────────────────────────────────────
+                arr = subset.values.astype(np.float32)  # (depth, lat, lon)
 
-            # ── GPU safety: downsample if too large ───────────────────────────────
-            # Target: max 64 * 256 * 256 floats ≈ 4M samples for safe WebGL texture
-            MAX_GPU_SAMPLES = 64 * 256 * 256
-            if arr.size > MAX_GPU_SAMPLES:
-                arr = self._downsample_volume(arr, MAX_GPU_SAMPLES)
-                logger.info(f"Volume downsampled to shape {arr.shape} for GPU safety")
+                # Replace NaNs with missing value so WebGL textures don't break/bleed
+                depth_levels = self._resolve_depth_levels(ds)
+                meta = self._extract_cf_meta(ds, variable, depth_levels)
+                arr = np.nan_to_num(arr, nan=meta.missing_value)
 
-            depth_levels = self._resolve_depth_levels(ds)
-            meta = self._extract_cf_meta(ds, variable, depth_levels)
-            meta.bounds = {
-                "lat":   [float(min_lat), float(max_lat)],
-                "lon":   [float(min_lon), float(max_lon)],
-                "depth": [float(depth_levels[0]), float(depth_levels[-1])] if depth_levels else [],
-            }
+                # ── GPU safety: downsample if too large ───────────────────────────────
+                # Target: max 64 * 256 * 256 floats ≈ 4M samples for safe WebGL texture
+                MAX_GPU_SAMPLES = 64 * 256 * 256
+                if arr.size > MAX_GPU_SAMPLES:
+                    arr = self._downsample_volume(arr, MAX_GPU_SAMPLES)
+                    logger.info(f"Volume downsampled to shape {arr.shape} for GPU safety")
 
-            return VolumeResult(
-                data=arr,
-                meta=meta,
-                lat=ds.coords[lat_dim].sel(**{lat_dim: slice(min_lat, max_lat)}).values.astype(np.float32),
-                lon=ds.coords[lon_dim].sel(**{lon_dim: slice(min_lon, max_lon)}).values.astype(np.float32),
-                time_str=time_str,
-            )
+                meta.bounds = {
+                    "lat":   [float(min_lat), float(max_lat)],
+                    "lon":   [float(min_lon), float(max_lon)],
+                    "depth": [float(depth_levels[0]), float(depth_levels[-1])] if depth_levels else [],
+                }
+
+                return VolumeResult(
+                    data=arr,
+                    meta=meta,
+                    lat=ds.coords[lat_dim].sel(**{lat_dim: slice(min_lat, max_lat)}).values.astype(np.float32),
+                    lon=ds.coords[lon_dim].sel(**{lon_dim: slice(min_lon, max_lon)}).values.astype(np.float32),
+                    time_str=time_str,
+                )
+            finally:
+                ds.close()
 
     def get_profile_at(
         self,
@@ -589,33 +634,36 @@ class NetCDFAdapter(DataSourceAdapter):
         ds = self.open(None)   # not locked — may trigger a slow live fetch; see _NETCDF_IO_LOCK's comment
 
         with _NETCDF_IO_LOCK:
-            lat_dim = "latitude" if "latitude" in ds.dims else "lat"
-            lon_dim = "longitude" if "longitude" in ds.dims else "lon"
+            try:
+                lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+                lon_dim = "longitude" if "longitude" in ds.dims else "lon"
 
-            subset = ds[variable].sel(**{
-                lat_dim: lat,
-                lon_dim: lon
-            }, method="nearest")
+                subset = ds[variable].sel(**{
+                    lat_dim: lat,
+                    lon_dim: lon
+                }, method="nearest")
 
-            if "time" in subset.dims:
-                n_time = subset.sizes["time"]
-                if time_idx >= n_time:
-                    logger.warning(
-                        f"get_profile_at: requested time_idx={time_idx} out of range "
-                        f"(only {n_time} step(s) available in this cached window) — "
-                        f"using the last available step instead."
-                    )
-                    time_idx = n_time - 1
-                subset = subset.isel(time=time_idx)
+                if "time" in subset.dims:
+                    n_time = subset.sizes["time"]
+                    if time_idx >= n_time:
+                        logger.warning(
+                            f"get_profile_at: requested time_idx={time_idx} out of range "
+                            f"(only {n_time} step(s) available in this cached window) — "
+                            f"using the last available step instead."
+                        )
+                        time_idx = n_time - 1
+                    subset = subset.isel(time=time_idx)
 
-            depth_levels = self._resolve_depth_levels(ds)
-            depth_arr = np.array(depth_levels, dtype=np.float32)
+                depth_levels = self._resolve_depth_levels(ds)
+                depth_arr = np.array(depth_levels, dtype=np.float32)
 
-            arr = subset.values.astype(np.float32)
-            meta = self._extract_cf_meta(ds, variable, depth_levels)
-            arr = np.nan_to_num(arr, nan=meta.missing_value)
+                arr = subset.values.astype(np.float32)
+                meta = self._extract_cf_meta(ds, variable, depth_levels)
+                arr = np.nan_to_num(arr, nan=meta.missing_value)
 
-            return depth_arr, arr
+                return depth_arr, arr
+            finally:
+                ds.close()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
