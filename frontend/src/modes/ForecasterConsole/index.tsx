@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { SceneManager } from '../../scene/SceneManager'
+import { IndiaMapView } from '../../scene/IndiaMapView'
 import { ControlPanel } from '../../controls/ControlPanel'
 import { SearchBar } from '../../controls/SearchBar'
 import { useTarangStore } from '../../state/store'
@@ -28,6 +29,9 @@ export function ForecasterConsole() {
   const setUIMode          = useTarangStore(s => s.setUIMode)
   const renderMode         = useTarangStore(s => s.renderMode)
   const setRenderMode      = useTarangStore(s => s.setRenderMode)
+  const viewScope          = useTarangStore(s => s.viewScope)
+  const setViewScope       = useTarangStore(s => s.setViewScope)
+  const regionDataMissing  = useTarangStore(s => s.regionDataMissing)
   const t = useT()
   const [showGlossary, setShowGlossary] = useState(false)
 
@@ -39,12 +43,20 @@ export function ForecasterConsole() {
 
   return (
     <div id="forecaster-console" style={styles.container}>
-      {/* ── 3D Scene (shared render core) ────────────────────────────── */}
+      {/* ── View: 2D India map, or the 3D globe ─────────────────────── */}
       <div style={styles.sceneWrapper}>
-        <SceneManager />
+        {viewScope === 'india' ? <IndiaMapView /> : <SceneManager />}
         {!hasSearchedRegion && !showHomeOverlay && (
           <div id="search-hint" style={styles.searchHint}>
             {t('searchHint')}
+          </div>
+        )}
+        {hasSearchedRegion && regionDataMissing && renderMode === 'slice' && (
+          <div id="no-data-banner" style={styles.noDataBanner}>
+            No model data for this region.{' '}
+            {viewScope === 'india'
+              ? 'Pick a point over open water in the Arabian Sea or Bay of Bengal.'
+              : 'This spot has no cached data — search a named sea instead.'}
           </div>
         )}
       </div>
@@ -77,6 +89,26 @@ export function ForecasterConsole() {
             <SearchBar />
             <ControlPanel />
 
+            {/* ── View scope: India (default, primary) vs. the full Globe ── */}
+            <div style={styles.scopeToggle} role="group" aria-label="View scope">
+              <button
+                id="view-scope-india"
+                style={{ ...styles.scopeBtn, ...(viewScope === 'india' ? styles.scopeBtnActive : {}) }}
+                onClick={() => setViewScope('india')}
+                title="Arabian Sea + Bay of Bengal — the primary demo view"
+              >
+                India
+              </button>
+              <button
+                id="view-scope-globe"
+                style={{ ...styles.scopeBtn, ...(viewScope === 'globe' ? styles.scopeBtnActive : {}) }}
+                onClick={() => setViewScope('globe')}
+                title="Full rotating globe — search any sea worldwide"
+              >
+                Globe
+              </button>
+            </div>
+
             {/* Mode switch button */}
             <button
               id="switch-to-explorer"
@@ -99,9 +131,9 @@ export function ForecasterConsole() {
             <ProfilePopover platformId={selectedPlatformId} />
           )}
 
-          {/* ── Thermal Legend ────────────────────────────────────────────── */}
-          <Legend />
-          
+          {/* ── Thermal Legend (hidden while the slice overlay has no data to describe) ── */}
+          {!(regionDataMissing && renderMode === 'slice') && <Legend />}
+
           {/* ── Glossary Panel ────────────────────────────────────────────── */}
           {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}
 
@@ -132,6 +164,9 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
+    // Trap Leaflet's internal pane z-indexes (200–700) in their own stacking context so the
+    // 2D map can never render over the Volume/Iso modal or the ProfilePopover.
+    isolation: 'isolate',
   },
   searchHint: {
     position:       'absolute',
@@ -147,7 +182,51 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize:       '13px',
     fontWeight:     '500',
     pointerEvents:  'none',
-    zIndex:         5,
+    zIndex:         1200,   // above Leaflet's controls/panes in India view
+  },
+  noDataBanner: {
+    position:       'absolute',
+    top:            '20px',
+    left:           '50%',
+    transform:      'translateX(-50%)',
+    maxWidth:       '520px',
+    padding:        '10px 20px',
+    background:     'rgba(40, 20, 8, 0.9)',
+    backdropFilter: 'blur(10px)',
+    border:         '1px solid rgba(255, 170, 60, 0.45)',
+    borderRadius:   '8px',
+    color:          '#ffcc80',
+    fontSize:       '13px',
+    fontWeight:     '500',
+    textAlign:      'center',
+    pointerEvents:  'none',
+    zIndex:         1210,
+  },
+  scopeToggle: {
+    display: 'flex',
+    gap: '4px',
+    padding: '3px',
+    background: 'rgba(0, 20, 40, 0.6)',
+    border: '1px solid rgba(0, 180, 255, 0.15)',
+    borderRadius: '9px',
+  },
+  scopeBtn: {
+    flex: 1,
+    padding: '6px 10px',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: '6px',
+    color: 'rgba(160, 196, 232, 0.65)',
+    fontSize: '12px',
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+  },
+  scopeBtnActive: {
+    background: 'rgba(0, 180, 255, 0.22)',
+    color: '#00d4ff',
+    boxShadow: '0 0 0 1px rgba(0, 212, 255, 0.4)',
   },
   sidebar: {
     width: '320px',

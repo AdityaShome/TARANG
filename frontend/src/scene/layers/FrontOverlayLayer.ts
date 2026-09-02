@@ -49,22 +49,26 @@ export class FrontOverlayLayer implements Layer {
         this.clearMeshes()
         if (cells.length === 0) return
 
+        // Thin dense front fields so the globe doesn't turn into a magenta smear.
+        const stride = Math.max(1, Math.ceil(cells.length / 500))
+        const shown = cells.filter((_, i) => i % stride === 0)
+
         const dummy = new THREE.Object3D()
 
-        const geometry = new THREE.CircleGeometry(0.3, 8) // slightly smaller than eddies
-        const material = new THREE.MeshBasicMaterial({ 
+        const geometry = new THREE.CircleGeometry(0.28, 6)
+        const material = new THREE.MeshBasicMaterial({
           color: 0xff00ff, // magenta for fronts
           transparent: true,
           opacity: 0.8,
           side: THREE.DoubleSide
         })
-        const mesh = new THREE.InstancedMesh(geometry, material, cells.length)
+        const mesh = new THREE.InstancedMesh(geometry, material, shown.length)
         mesh.frustumCulled = false
 
-        cells.forEach((cell, i) => {
+        shown.forEach((cell, i) => {
           const pos = latLonToXYZ(cell.lat, cell.lon, EARTH_RADIUS * 1.009)
           dummy.position.copy(pos)
-          dummy.lookAt(pos.clone().multiplyScalar(2)) 
+          dummy.lookAt(pos.clone().multiplyScalar(2))
           dummy.updateMatrix()
           mesh.setMatrixAt(i, dummy.matrix)
         })

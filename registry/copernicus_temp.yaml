@@ -1,5 +1,5 @@
 id: copernicus_temp
-label: "Copernicus Marine (LIVE)"
+label: "Copernicus Marine — Temperature (global live-fetch)"
 description: "Live 3D sea water potential temperature from Copernicus Marine Service. Pre-cached for the Bay of Bengal; any other searched region is fetched live, bbox-scoped, straight from Copernicus (see live_dataset_id below)."
 
 adapter: NetCDFAdapter
@@ -7,7 +7,7 @@ source: "http://thredds:8080/thredds/dodsC/netcdf/copernicus_bob_temp.nc"
 local_cache: "data/netcdf/copernicus_bob_temp.nc"
 # Extent actually covered by local_cache — a search outside this box skips the stale local
 # file and fetches live via live_dataset_id instead of silently returning BoB data.
-local_cache_bbox: [80, 5, 100, 25]
+local_cache_bbox: [58, 2, 100, 26]
 # NOT cmems_mod_glo_phy_anfc_0.083deg_P1D-m — that dataset_id only carries surface/derived
 # fields (mlotst, zos, sea ice, bottom temp/salinity...). Depth-resolved thetao lives in this
 # separate per-variable dataset. Verified directly against the Copernicus Marine API.
@@ -22,4 +22,4 @@ valid_max: 40.0
 colormap: viridis
 render_type: volume
 
-default_bbox: [80, 5, 100, 25]
+default_bbox: [58, 2, 100, 26]

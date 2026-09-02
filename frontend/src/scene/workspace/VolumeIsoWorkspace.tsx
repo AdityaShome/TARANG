@@ -31,7 +31,7 @@ import workspaceVolumeFrag from '../shaders/workspaceVolumeFrag.glsl?raw'
  * Axis convention:
  *   world X → longitude   (left = west edge of bbox, right = east edge)
  *   world Z → latitude    (front = south edge of bbox, back = north edge)
- *   world Y → depth, DOWNWARD — y=0 is the sea surface (top face), y=-BOX_DEPTH the deepest
+ *   world Y → depth, DOWNWARD — y=0 is the sea surface (top face), y=-depthWorld the deepest
  *             sample. Matches the depth_levels convention (index 0 = shallowest) and keeps Y as
  *             the THREE/OrbitControls up-axis.
  */
@@ -44,8 +44,16 @@ interface VolumeIsoWorkspaceProps {
 // Box footprint in world units — fixed regardless of the region's real degree span. Aspect ratio
 // between the two horizontal axes still reflects the region's shape.
 const BOX_MAX_HORIZONTAL = 12
-const BOX_DEPTH = 7
+// Depth-axis height at the DEFAULT vertical exaggeration (store's colormap.verticalExaggeration
+// = 50). The slider stretches/squashes this so a researcher can dial depth perception in/out.
+const BOX_DEPTH_AT_DEFAULT_VE = 7
+const DEFAULT_VE = 50
 const FALLBACK_DEPTH_LEVELS = [0, 50, 100, 200, 500, 1000, 1500, 2000]
+
+function depthWorldFor(verticalExaggeration: number): number {
+  const ve = verticalExaggeration || DEFAULT_VE
+  return Math.min(18, Math.max(2.5, BOX_DEPTH_AT_DEFAULT_VE * (ve / DEFAULT_VE)))
+}
 
 // Set true only if a data source ever returns lat rows running north→south (the shader / iso
 // reprojection then mirror the lat axis). Fixtures + Copernicus are south→north, so: false.
@@ -94,10 +102,14 @@ function makeTextSprite(text: string, opts: { size?: number; color?: string } = 
 // Isosurface mode inverts it to place marching-cubes verts; instrument markers go through
 // project() below, which just prepends the real-units→fraction step. One mapping, one box —
 // keeping these in lockstep is why they're all derived from this single function.
+//
+// Axis frame (right-handed, so the view is never mirrored vs. the 2D map): world +X = EAST,
+// world -Z = NORTH, world +Y = up. The camera sits south of the box looking north, so on
+// screen east is right and north is back — same as looking at a map.
 function makeWorldToUnit(lonW: number, latW: number, depthWorld: number): THREE.Matrix4 {
   return new THREE.Matrix4().set(
     1 / lonW, 0, 0, 0.5,
-    0, 0, 1 / latW, 0.5,
+    0, 0, -1 / latW, 0.5,   // lat frac 0 (south) sits at +Z; north is -Z
     0, -1 / depthWorld, 0, 0,
     0, 0, 0, 1,
   )
@@ -142,6 +154,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
   const cfMetadata = useTarangStore(s => s.cfMetadata)
   const colormapName = useTarangStore(s => s.colormap.name)
   const colormapLog = useTarangStore(s => s.colormap.logScale)
+  const verticalExaggeration = useTarangStore(s => s.colormap.verticalExaggeration)
   const setSelectedPlatform = useTarangStore(s => s.setSelectedPlatform)
   const setColormap = useTarangStore(s => s.setColormap)
 
@@ -176,7 +189,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     const aspect = latSpan / lonSpan
     const lonW = aspect >= 1 ? BOX_MAX_HORIZONTAL / aspect : BOX_MAX_HORIZONTAL
     const latW = aspect >= 1 ? BOX_MAX_HORIZONTAL : BOX_MAX_HORIZONTAL * aspect
-    const depthWorld = BOX_DEPTH
+    const depthWorld = depthWorldFor(verticalExaggeration)
     const levels = depthLevels.length > 0 ? depthLevels : FALLBACK_DEPTH_LEVELS
     const maxDepthM = Math.max(...levels)
 
@@ -200,7 +213,11 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     scene.background = new THREE.Color(0x050a14)
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000)
-    camera.position.set(lonW * 1.1, depthWorld * 0.95, latW * 1.5)
+    // South of the box (+Z), a little east, well above — looking north. East → screen right,
+    // north → screen back, matching the 2D map's orientation. Pull back for a tall box so a
+    // cranked-up vertical exaggeration still fits the frame.
+    const fit = Math.max(lonW, latW, depthWorld)
+    camera.position.set(lonW * 0.35, depthWorld * 0.6 + fit * 0.5, latW * 0.4 + fit * 1.1)
     camera.up.set(0, 1, 0)
 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -254,12 +271,18 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     scene.add(sideWallGrid)
 
     // ── Axis labels + a few numeric ticks ──────────────────────────────────
+    // Axis labels — placed for the south-looking-north camera: longitude runs along the near
+    // (front) bottom edge, latitude along the right bottom edge, north points to the far edge.
     const lonTitle = makeTextSprite('LONGITUDE →', { color: '#5ec8ff' })
     lonTitle.position.set(0, -depthWorld - 0.9, latW / 2 + 0.9)
     scene.add(lonTitle)
 
-    const latTitle = makeTextSprite('← LATITUDE', { color: '#5ec8ff' })
-    latTitle.position.set(lonW / 2 + 1.1, -depthWorld - 0.9, 0)
+    const northTitle = makeTextSprite('NORTH ↑', { color: '#5ec8ff' })
+    northTitle.position.set(0, -depthWorld - 0.9, -latW / 2 - 0.9)
+    scene.add(northTitle)
+
+    const latTitle = makeTextSprite('LATITUDE', { color: '#5ec8ff' })
+    latTitle.position.set(lonW / 2 + 1.4, -depthWorld - 0.9, 0)
     scene.add(latTitle)
 
     const depthTitle = makeTextSprite('DEPTH (m) ↓', { color: '#5ec8ff' })
@@ -275,7 +298,8 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
 
       const latVal = minLat + frac * latSpan
       const t2 = makeTextSprite(`${latVal.toFixed(1)}°`, { size: 30, color: tickColor })
-      t2.position.set(lonW / 2 + 0.5, -depthWorld - 0.35, (frac - 0.5) * latW)
+      // south (minLat) is at +Z (near), north (maxLat) at -Z (far)
+      t2.position.set(lonW / 2 + 0.5, -depthWorld - 0.35, (0.5 - frac) * latW)
       scene.add(t2)
     }
 
@@ -320,13 +344,24 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     const dataGroup = new THREE.Group()
     scene.add(dataGroup)
 
+    // Retry once on a transient failure (the 2-worker backend 502s under load) before showing
+    // the error state.
+    async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+      try { return await fn() }
+      catch (e: any) {
+        if (disposed || e?.name === 'AbortError') throw e
+        await new Promise(r => setTimeout(r, 1500))
+        return await fn()
+      }
+    }
+
     ;(async () => {
       try {
         if (mode === 'volume') {
-          const { header, data } = await fetchVolume(
+          const { header, data } = await withRetry(() => fetchVolume(
             { source: activeSourceId, var: activeVar, time: activeTimeIdx, bbox },
             abort.signal,
-          )
+          ))
           if (disposed) return
           const [depthSize, latSize, lonSize] = header.shape
 
@@ -374,10 +409,10 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
           if (header.depth_levels?.length) setDepthTicks(Math.max(...header.depth_levels))
           setStatus('ready')
         } else {
-          const { header, verts, faces } = await fetchIsosurface(
+          const { header, verts, faces } = await withRetry(() => fetchIsosurface(
             { source: activeSourceId, var: activeVar, threshold: isoThreshold, time: activeTimeIdx, bbox },
             abort.signal,
-          )
+          ))
           if (disposed) return
           if (header.n_verts === 0 || verts.length === 0) {
             setStatus('empty')
@@ -490,7 +525,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     }
   }, [
     mode, bbox, activeSourceId, activeVar, activeTimeIdx, isoThreshold, depthLevels,
-    colormapName, colormapLog, setSelectedPlatform, setColormap,
+    colormapName, colormapLog, verticalExaggeration, setSelectedPlatform, setColormap,
   ])
 
   return (
@@ -553,7 +588,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 200,
+    zIndex: 1500,
     transition: 'opacity 280ms ease',
   },
   panel: {

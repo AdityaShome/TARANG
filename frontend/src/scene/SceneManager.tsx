@@ -18,7 +18,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { useTarangStore } from '../state/store'
+import { useTarangStore, VIEW_SCOPE_PRESETS } from '../state/store'
 import { LayerManager } from './LayerManager'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
@@ -41,13 +41,6 @@ interface SceneManagerProps {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const EARTH_RADIUS = 200
-// Initial camera framing on load, BEFORE any region is searched — deliberately not centred
-// tightly on any one sea (there is no default region; see hasSearchedRegion in store.ts).
-// A wide, pulled-back view of the broader Indian Ocean invites a search instead of implying
-// "this is the region," which a closer BoB-centred view used to.
-const INITIAL_VIEW_LAT = 5
-const INITIAL_VIEW_LON = 65
-const INITIAL_VIEW_DISTANCE_MULT = 4
 
 // Convert lat/lon to 3D point on sphere
 function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 {
@@ -201,9 +194,10 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     const scene = new THREE.Scene()
     sceneRef.current = scene
 
-    // ── Camera — wide initial view; see INITIAL_VIEW_* comment above ──────
+    // ── Camera — framed per the current view scope (India-focused by default) ──────
     const camera = new THREE.PerspectiveCamera(45, w / h, 1, 5000)
-    const camTarget = latLonToXYZ(INITIAL_VIEW_LAT, INITIAL_VIEW_LON, EARTH_RADIUS * INITIAL_VIEW_DISTANCE_MULT)
+    const initPreset = VIEW_SCOPE_PRESETS[useTarangStore.getState().viewScope] ?? VIEW_SCOPE_PRESETS.globe
+    const camTarget = latLonToXYZ(initPreset.lat, initPreset.lon, EARTH_RADIUS * initPreset.distanceMult)
     camera.position.copy(camTarget)
     camera.lookAt(0, 0, 0)
     cameraRef.current = camera
@@ -347,6 +341,13 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       if (cubeLayer) cubeLayer.animate(Math.min(dt, 0.1))   // clamp dt to avoid spin jump on tab refocus
 
       controlsRef.current?.update()
+
+      // Keep instrument markers a roughly constant apparent size regardless of zoom
+      // (a fixed world-radius sphere otherwise balloons on close zoom). Cheap: the layer
+      // no-ops unless the camera distance changed meaningfully.
+      const markers = layerManagerRef.current?.getLayer('markers') as InstrumentMarkerLayer | undefined
+      markers?.setCameraDistance(camera.position.length())
+
       composer.render()
     }
     animate()
@@ -634,7 +635,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
 
     if (activeLayerIds.has('vectors')) {
       const layer = layerManager.getLayer('vectors')
-      if (layer) pending.push(layer.update({ bbox, timeIdx: activeTimeIdx, opacity: colormap.opacity }))
+      if (layer) pending.push(layer.update({ bbox, timeIdx: activeTimeIdx, depthIdx: activeDepthIdx, opacity: colormap.opacity }))
     }
 
     if (activeLayerIds.has('eddy')) {
@@ -685,9 +686,11 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     const camera = cameraRef.current
     const controls = controlsRef.current
 
-    // Keep the current zoom distance — only change WHERE we're looking, matching how the
-    // camera was originally aimed at BOB_LAT_C/BOB_LON_C on mount (see camTarget above).
-    const distance = camera.position.length() || EARTH_RADIUS * 2.4
+    // A region search omits distanceMult → keep the current zoom, only change WHERE we look.
+    // A view-scope toggle sets distanceMult → also re-zoom to that scope's framing.
+    const distance = flyToTarget.distanceMult != null
+      ? EARTH_RADIUS * flyToTarget.distanceMult
+      : (camera.position.length() || EARTH_RADIUS * 2.4)
     const newPos = latLonToXYZ(flyToTarget.lat, flyToTarget.lon, distance)
     camera.position.copy(newPos)
     controls.target.set(0, 0, 0)

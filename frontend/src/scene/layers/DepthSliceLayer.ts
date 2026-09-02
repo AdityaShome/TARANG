@@ -26,6 +26,9 @@ export class DepthSliceLayer implements Layer {
   // the latest request is discarded instead of clobbering a newer selection (region picked
   // twice quickly, or the preview crop resolving after the real fetch already landed).
   private requestToken = 0
+  // The request whose REAL (non-preview) result has already been applied — a late-arriving
+  // preview crop for that same request must not regress the mesh back to a dim placeholder.
+  private realLandedToken = -1
   // True while the mesh shows the coarse preview crop rather than the real regional fetch —
   // SceneManager/UI can read this to show a "preview" hint if desired.
   isPreview = false
@@ -138,9 +141,15 @@ export class DepthSliceLayer implements Layer {
       // the real (possibly slow, e.g. live Copernicus) fetch is in flight.
       const cached = peekPreview(source, variable, timeIdx)
       const applyPreview = (preview: typeof cached) => {
-        if (!preview || myToken !== this.requestToken) return
+        if (!preview || myToken !== this.requestToken || this.realLandedToken === myToken) return
         const cropped = cropPreview(preview, bbox)
-        if (!cropped) return
+        if (!cropped) {
+          // No placeholder available here (region outside the preview's coverage). Don't leave
+          // the PREVIOUS region's overlay on screen while the real fetch runs — clear now; the
+          // real fetch will either fill it or (if it too has no data) leave it cleared.
+          this.clearData()
+          return
+        }
         this.isPreview = true
         this.applyGrid(
           cropped.data, cropped.width, cropped.height, cropped.bounds,
@@ -169,20 +178,52 @@ export class DepthSliceLayer implements Layer {
 
         if (myToken !== this.requestToken) return   // a newer selection superseded this one
 
+        // The real answer for this request is now known (data, nothing, or an error) — a
+        // late-arriving preview crop for it must no longer touch the mesh.
+        this.realLandedToken = myToken
+
         const [latSize, lonSize] = header.shape
+        // Degenerate grid → the backend has no data covering this bbox (common offline: a
+        // drag/click outside the pre-cached fixture extent). The backend still 200s with a
+        // 0-width array; applying it either throws or shows a broken/stale overlay. Bail and
+        // let the UI say "no data for this region" instead.
+        if (lonSize < 2 || latSize < 2 || data.length < lonSize * latSize) {
+          this.clearData()
+          useTarangStore.getState().setRegionDataMissing(true)
+          return
+        }
+
         this.isPreview = false
         this.applyGrid(
           data, lonSize, latSize, header.bounds,
           header.missing_value, header.valid_min, header.valid_max,
         )
+        useTarangStore.getState().setRegionDataMissing(false)
       } catch (err: any) {
         if (err.name === 'AbortError') {
-          // Ignore aborts
+          // Ignore aborts — a newer selection cancelled this one.
         } else {
           console.error("DepthSliceLayer fetch error:", err)
+          if (myToken === this.requestToken) {
+            this.realLandedToken = myToken
+            this.clearData()
+            useTarangStore.getState().setRegionDataMissing(true)
+          }
         }
       }
     }
+  }
+
+  // Drop the current overlay entirely — used when a region change lands somewhere with no
+  // usable slice data (offline + nothing cached for that bbox, or a fetch error). Without this
+  // the previous region's texture stays on screen: markers and the outline box update but the
+  // coloured overlay still shows the old landmass, which reads as "wrong data", not "no data".
+  private clearData() {
+    this.hasData = false
+    this.isPreview = false
+    if (this.mesh) this.mesh.visible = false
+    if (this.texture) { this.texture.dispose(); this.texture = null }
+    if (this.material) this.material.uniforms.u_data.value = null
   }
 
   setVisible(visible: boolean) {

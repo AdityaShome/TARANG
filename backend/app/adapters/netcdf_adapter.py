@@ -136,9 +136,12 @@ class NetCDFAdapter(DataSourceAdapter):
     def _local_cache_covers(self, bbox: tuple[float, float, float, float] | None) -> bool:
         """
         True if local_cache exists on disk AND either we don't know its extent
-        (local_cache_bbox unset — assume it's a global/full-coverage file) or the
-        requested bbox falls inside the known extent. A researcher searching a sea
-        outside a regional pre-download must NOT silently get that region's data back.
+        (local_cache_bbox unset — assume global) or the requested bbox SUBSTANTIALLY
+        overlaps the cached extent. We use the cache (xarray .sel clips to whatever the
+        file actually holds) whenever most of the request is covered — a click-pick box
+        that spills a degree past the cached edge should not fall through to a live fetch.
+        A genuinely different sea (little/no overlap) still goes live, so a researcher
+        searching elsewhere never silently gets this region's data back.
         """
         if not self.local_cache or not Path(self.local_cache).exists():
             return False
@@ -146,11 +149,12 @@ class NetCDFAdapter(DataSourceAdapter):
             return True
         min_lon, min_lat, max_lon, max_lat = bbox
         c_min_lon, c_min_lat, c_max_lon, c_max_lat = self.local_cache_bbox
-        eps = 0.01  # degrees — avoid float-boundary flapping right at the cached edge
-        return (
-            c_min_lon - eps <= min_lon and max_lon <= c_max_lon + eps and
-            c_min_lat - eps <= min_lat and max_lat <= c_max_lat + eps
-        )
+
+        ix = max(0.0, min(max_lon, c_max_lon) - max(min_lon, c_min_lon))
+        iy = max(0.0, min(max_lat, c_max_lat) - max(min_lat, c_min_lat))
+        inter = ix * iy
+        req = max((max_lon - min_lon) * (max_lat - min_lat), 1e-9)
+        return inter / req >= 0.4
 
     def _open_local_or_configured_url(self, use_local: bool, override_path: str | None = None) -> xr.Dataset:
         source = override_path if override_path is not None else (self.local_cache if use_local else self.source_url)
@@ -182,14 +186,46 @@ class NetCDFAdapter(DataSourceAdapter):
             "(netCDF4, h5netcdf, scipy). Check installation of netCDF4>=1.6."
         )
 
+    def _find_covering_cache(
+        self, cache_dir: Path, bbox: tuple[float, float, float, float]
+    ) -> Path | None:
+        """Smallest live_cache/*.nc file for this variable whose own bbox fully contains `bbox`."""
+        if not cache_dir.exists():
+            return None
+        min_lon, min_lat, max_lon, max_lat = bbox
+        prefix = f"live_{self.variable}_"
+        eps = 0.05
+        best: tuple[Path, float] | None = None
+        for f in cache_dir.glob(f"{prefix}*.nc"):
+            parts = f.stem[len(prefix):].split("_")
+            if len(parts) != 4:
+                continue
+            try:
+                f_lo, f_la, f_Lo, f_La = (float(p) for p in parts)
+            except ValueError:
+                continue
+            if (f_lo - eps <= min_lon and max_lon <= f_Lo + eps
+                    and f_la - eps <= min_lat and max_lat <= f_La + eps):
+                area = (f_Lo - f_lo) * (f_La - f_la)
+                if best is None or area < best[1]:
+                    best = (f, area)
+        return best[0] if best else None
+
     def _cell_cache_file(self, cache_dir: Path, cell: tuple[float, float]) -> Path:
         clon, clat = cell
         key = f"live_{self.variable}_{clon:.1f}_{clat:.1f}_{clon + _GRID_SIZE_DEG:.1f}_{clat + _GRID_SIZE_DEG:.1f}"
         return cache_dir / f"{key}.nc"
 
-    def _open_live_copernicus(self, bbox: tuple[float, float, float, float], mode: str = "live") -> xr.Dataset:
-        """Bbox-scoped fetch from Copernicus Marine via subset() (far faster than lazy zarr here)."""
-        import copernicusmarine
+    def _open_live_copernicus(
+        self, bbox: tuple[float, float, float, float], mode: str = "live", allow_fetch: bool = True
+    ) -> xr.Dataset:
+        """Bbox-scoped fetch from Copernicus Marine via subset() (far faster than lazy zarr here).
+
+        mode="cached" → read pre-warmed cells over local HTTP byte-range (the B2 landing-page path).
+        allow_fetch=False → cache-only: reuse anything already in live_cache/ (grid-cell stitch or
+        an exact-bbox file), but raise instead of hitting the network. Used by OFFLINE_MODE so a
+        region fetched in a previous online session keeps working with no connectivity.
+        """
         from datetime import datetime, timedelta
 
         if mode == "cached":
@@ -231,11 +267,20 @@ class NetCDFAdapter(DataSourceAdapter):
             ]
             return xr.combine_by_coords(datasets, combine_attrs="override")
 
+        min_lon, min_lat, max_lon, max_lat = bbox
+
+        # Any single cached file that fully CONTAINS this bbox works too — get_slice/get_volume
+        # will .sel() the sub-region out of it. This is what makes a small drag/click inside an
+        # already-fetched sea (e.g. a corner of the cached Arabian Sea box) resolve instantly
+        # offline instead of falling back to the wrong fixture.
+        covering = self._find_covering_cache(cache_dir, bbox)
+        if covering is not None:
+            logger.info(f"Using cached live fetch covering bbox={bbox}: {covering.name}")
+            return self._open_local_or_configured_url(use_local=False, override_path=str(covering))
+
         # Not fully covered by warmed cells — fetch exactly the requested bbox live (no
         # expansion/snapping: a mis-sized novel cell wouldn't be reusable later anyway, so there's
         # no benefit to fetching more than what was actually asked for).
-        min_lon, min_lat, max_lon, max_lat = bbox
-
         # Cache by rounded bbox + variable so re-querying the same region reuses the file.
         cache_key = f"live_{self.variable}_{min_lon:.1f}_{min_lat:.1f}_{max_lon:.1f}_{max_lat:.1f}"
         cache_file = cache_dir / f"{cache_key}.nc"
@@ -248,6 +293,13 @@ class NetCDFAdapter(DataSourceAdapter):
         # Whichever caller gets the lock first does the real fetch; everyone else blocks here,
         # then (now that the first caller finished) finds cache_file already on disk and just
         # opens it, instead of every caller racing to independently re-download the same subset.
+        if not allow_fetch:
+            raise FileNotFoundError(
+                f"OFFLINE_MODE: no cached live data covering bbox={bbox} for '{self.variable}'"
+            )
+
+        import copernicusmarine
+
         with _lock_for(cache_key):
             if cache_file.exists():   # someone else finished the fetch while we were waiting
                 logger.info(f"Using cached live fetch (fetched while waiting): {cache_file}")
@@ -315,9 +367,16 @@ class NetCDFAdapter(DataSourceAdapter):
         if self._local_cache_covers(bbox):
             return self._open_local_or_configured_url(use_local=True)
 
-        # OFFLINE_MODE: no live fetch — serve the local cache even if the bbox spills
-        # outside its extent, else fall to source_url (the in-cluster THREDDS).
+        # OFFLINE_MODE: no outbound calls. Still prefer bbox-scoped data already on disk from a
+        # previous online session (live_cache/) — "offline" means no network, not "throw away
+        # data we already have". Only then fall back to the (BoB-only) local_cache fixture, and
+        # finally source_url (the in-cluster THREDDS).
         if _offline_mode():
+            if self.live_dataset_id and bbox is not None:
+                try:
+                    return self._open_live_copernicus(bbox, allow_fetch=False)
+                except Exception as e:
+                    logger.info(f"OFFLINE_MODE: {e}; falling back to local_cache")
             if self.local_cache and Path(self.local_cache).exists():
                 logger.info(f"OFFLINE_MODE: serving cached '{self.local_cache}' for bbox {bbox}")
                 return self._open_local_or_configured_url(use_local=True)

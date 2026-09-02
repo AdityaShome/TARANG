@@ -62,6 +62,17 @@ async def get_profile(
     loop = asyncio.get_running_loop()
     registry = request.app.state.registry
 
+    # Instrument type (argo / glider / ctd / bgc / mooring / adcp) from PostGIS, so the UI can
+    # label the popover correctly instead of always saying "Argo Float".
+    db = getattr(request.app.state, "db", None)
+    inst_type = None
+    if db is not None:
+        try:
+            meta = await db.get_profile_meta(platform_id)
+            inst_type = meta.get("type") if meta else None
+        except Exception as e:
+            logger.debug(f"instrument-type lookup failed for {platform_id}: {e}")
+
     def fetch_profile():
         # Try every local cache file (data/argo/*.nc + data/glider/*.nc) — no fixed
         # platform_id→file mapping, and _load_from_local_cache resolves either shape.
@@ -72,6 +83,8 @@ async def get_profile(
         cache_files = sorted(
             glob.glob(os.path.join(data_dir, "argo", "*.nc"))
             + glob.glob(os.path.join(data_dir, "glider", "*.nc"))
+            + glob.glob(os.path.join(data_dir, "ctd", "*.nc"))
+            + glob.glob(os.path.join(data_dir, "bgc", "*.nc"))
         )
 
         profile = None
@@ -110,8 +123,20 @@ async def get_profile(
             try:
                 import numpy as np
                 adapter = registry.get_adapter(source)
-                    model_depths, model_sal = adapter.get_profile_at(adapter_var, profile["lat"], profile["lon"], time_idx)
-                    valid_mask = model_sal != adapter._extract_cf_meta(adapter.open(None), adapter_var, adapter._resolve_depth_levels(adapter.open(None))).missing_value
+
+                if profile["temperature"] and "temperature" in profile["units"]:
+                    model_depths, model_temp = adapter.get_profile_at("water_temp", profile["lat"], profile["lon"], time_idx)
+                    # Ignore NaNs/missing values for interpolation by masking
+                    valid_mask = model_temp != adapter._extract_cf_meta(adapter.open(None), "water_temp", adapter._resolve_depth_levels(adapter.open(None))).missing_value
+                    if np.any(valid_mask):
+                        interp_temp = np.interp(profile["depth"], model_depths[valid_mask], model_temp[valid_mask], left=np.nan, right=np.nan)
+                        profile["model_temperature"] = [float(v) if not np.isnan(v) else None for v in interp_temp]
+                        profile["delta_temperature"] = [float(m - o) if m is not None and o is not None else None
+                                                        for m, o in zip(profile["model_temperature"], profile["temperature"])]
+
+                if profile["salinity"] and "salinity" in profile["units"]:
+                    model_depths, model_sal = adapter.get_profile_at("salinity", profile["lat"], profile["lon"], time_idx)
+                    valid_mask = model_sal != adapter._extract_cf_meta(adapter.open(None), "salinity", adapter._resolve_depth_levels(adapter.open(None))).missing_value
                     if np.any(valid_mask):
                         interp_sal = np.interp(profile["depth"], model_depths[valid_mask], model_sal[valid_mask], left=np.nan, right=np.nan)
                         profile["model_salinity"] = [float(v) if not np.isnan(v) else None for v in interp_sal]
@@ -131,6 +156,9 @@ async def get_profile(
             status_code=404,
             content={"error": f"Profile not found for platform {platform_id}: {str(e)}"}
         )
+
+    if isinstance(profile_data, dict):
+        profile_data["instrument_type"] = inst_type or profile_data.get("instrument_type")
 
     return JSONResponse(content=profile_data)
 
@@ -161,6 +189,7 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
     col_pres     = _col("pres", "PRES", "pressure", "depth", "DEPTH")
     col_temp     = _col("temp", "TEMP", "temperature", "TEMPERATURE")
     col_psal     = _col("psal", "PSAL", "salinity", "SALINITY")
+    col_chl      = _col("chlorophyll", "CHLA", "chla", "CHLOROPHYLL", "chl_a", "chla_adjusted")
     col_lat      = _col("latitude", "LATITUDE")
     col_lon      = _col("longitude", "LONGITUDE")
     col_time     = _col("time", "TIME", "JULD")
@@ -194,7 +223,7 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
     lon  = float(sub[col_lon].values.flat[0])  if col_lon  else 0.0
     time = str(sub[col_time].values.flat[0])   if col_time else None
 
-    return {
+    result = {
         "platform_id": platform_id,
         "lat": lat,
         "lon": lon,
@@ -208,6 +237,10 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
             "salinity":    "psu",
         }
     }
+    if col_chl is not None:
+        result["chlorophyll"] = _values(col_chl)
+        result["units"]["chlorophyll"] = "mg m-3"
+    return result
 
 
 def _load_from_argopy(platform_id: str) -> dict:

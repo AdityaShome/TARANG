@@ -60,4 +60,4 @@ depth_levels:
   - 4000
   - 5000
 
-default_bbox: [80, 5, 100, 25]
+default_bbox: [58, 2, 100, 26]

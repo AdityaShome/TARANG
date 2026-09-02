@@ -185,19 +185,19 @@ async def lifespan(app: FastAPI):
     app.state.db = _db
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Gemini API status
+    # AI Copilot (OpenRouter) API status
     # ─────────────────────────────────────────────────────────────────────────
 
-    if os.getenv("GEMINI_API_KEY"):
+    if os.getenv("OPENROUTER_API_KEY"):
 
         logger.info(
-            "Gemini API key detected — AI Copilot enabled"
+            "OPENROUTER_API_KEY detected — AI Copilot enabled"
         )
 
     else:
 
         logger.warning(
-            "GEMINI_API_KEY not set — "
+            "OPENROUTER_API_KEY not set — "
             "AI Copilot will not work until the key is configured"
         )
 
@@ -447,7 +447,7 @@ async def health():
         "registry_size": registry_size,
 
         "ai_copilot": bool(
-            os.getenv("GEMINI_API_KEY")
+            os.getenv("OPENROUTER_API_KEY")
         ),
 
     })

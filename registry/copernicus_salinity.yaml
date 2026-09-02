@@ -1,11 +1,11 @@
 id: copernicus_salinity
-label: "Copernicus Marine — Salinity (LIVE)"
+label: "Copernicus Marine — Salinity (global live-fetch)"
 description: "Live 3D sea water salinity from Copernicus Marine Service. Pre-cached for the Bay of Bengal; any other searched region is fetched live, bbox-scoped, straight from Copernicus (see live_dataset_id below)."
 
 adapter: NetCDFAdapter
 source: "http://thredds:8080/thredds/dodsC/netcdf/copernicus_bob_salinity.nc"
 local_cache: "data/netcdf/copernicus_bob_salinity.nc"
-local_cache_bbox: [80, 5, 100, 25]
+local_cache_bbox: [58, 2, 100, 26]
 # See copernicus_temp.yaml's comment — depth-resolved `so` lives in this per-variable
 # dataset, not the surface/derived-fields cmems_mod_glo_phy_anfc_0.083deg_P1D-m bulletin.
 live_dataset_id: cmems_mod_glo_phy-so_anfc_0.083deg_P1D-m
@@ -19,4 +19,4 @@ valid_max: 50.0
 colormap: plasma
 render_type: volume
 
-default_bbox: [80, 5, 100, 25]
+default_bbox: [58, 2, 100, 26]

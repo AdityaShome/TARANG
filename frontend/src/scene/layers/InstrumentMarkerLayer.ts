@@ -43,8 +43,11 @@ const TYPE_COLORS: Record<string, number> = {
 export class InstrumentMarkerLayer implements Layer {
   private meshes: THREE.InstancedMesh[] = []
   private platformIdsByMesh: Map<THREE.InstancedMesh, string[]> = new Map()
+  private positionsByMesh: Map<THREE.InstancedMesh, THREE.Vector3[]> = new Map()
   private scene: THREE.Scene | null = null
   private abortController: AbortController | null = null
+  private markerScale = 1
+  private readonly _dummy = new THREE.Object3D()
 
   build(scene: THREE.Scene) {
     this.scene = scene
@@ -59,6 +62,32 @@ export class InstrumentMarkerLayer implements Layer {
     }
     this.meshes = []
     this.platformIdsByMesh.clear()
+    this.positionsByMesh.clear()
+  }
+
+  /**
+   * Keep markers a roughly constant apparent size as the camera dogs in/out. Called from the
+   * render loop with the camera distance to the globe centre; a fixed world-radius sphere
+   * otherwise balloons into a blob on close zoom. Throttled by the caller (only re-applies on a
+   * meaningful change) since it rewrites every instance matrix.
+   */
+  setCameraDistance(distance: number) {
+    // At the default framing (~2.4 R) markers are scale 1; closer in they shrink toward 0.25x,
+    // further out they grow up to 3x so they stay pickable on a whole-globe view.
+    const s = THREE.MathUtils.clamp(distance / (EARTH_RADIUS * 2.4), 0.25, 3)
+    if (Math.abs(s - this.markerScale) < 0.04) return
+    this.markerScale = s
+    for (const mesh of this.meshes) {
+      const positions = this.positionsByMesh.get(mesh)
+      if (!positions) continue
+      positions.forEach((pos, i) => {
+        this._dummy.position.copy(pos)
+        this._dummy.scale.setScalar(s)
+        this._dummy.updateMatrix()
+        mesh.setMatrixAt(i, this._dummy.matrix)
+      })
+      mesh.instanceMatrix.needsUpdate = true
+    }
   }
 
   async update(params: Partial<LayerParams>) {
@@ -89,17 +118,22 @@ export class InstrumentMarkerLayer implements Layer {
           mesh.frustumCulled = false // see the identical note in the other layers
 
           const platformIds: string[] = []
+          const positions: THREE.Vector3[] = []
           group.forEach((inst, i) => {
             platformIds.push(inst.platform_id)
             // Sit slightly above the surface (matches DepthSliceLayer's 1.0025x / boundary box's
             // 1.006x radii) so markers aren't z-fighting with the globe or hidden under the slice.
-            dummy.position.copy(latLonToXYZ(inst.lat, inst.lon, EARTH_RADIUS * 1.01))
+            const pos = latLonToXYZ(inst.lat, inst.lon, EARTH_RADIUS * 1.01)
+            positions.push(pos)
+            dummy.position.copy(pos)
+            dummy.scale.setScalar(this.markerScale)
             dummy.updateMatrix()
             mesh.setMatrixAt(i, dummy.matrix)
           })
 
           mesh.instanceMatrix.needsUpdate = true
           this.platformIdsByMesh.set(mesh, platformIds)
+          this.positionsByMesh.set(mesh, positions)
           this.meshes.push(mesh)
           this.scene!.add(mesh)
         }
