@@ -85,7 +85,13 @@ async def get_delta(
             try:
                 model_depths, model_vals = adapter.get_profile_at(adapter_var, profile["lat"], profile["lon"], time_idx)
                 ds_open = adapter.open(None)
-                cf_meta = adapter._extract_cf_meta(ds_open, adapter_var, adapter._resolve_depth_levels(ds_open))
+                try:
+                    cf_meta = adapter._extract_cf_meta(ds_open, adapter_var, adapter._resolve_depth_levels(ds_open))
+                finally:
+                    try:
+                        ds_open.close()
+                    except Exception:
+                        pass
                 valid_mask = model_vals != cf_meta.missing_value
                 
                 if np.any(valid_mask):

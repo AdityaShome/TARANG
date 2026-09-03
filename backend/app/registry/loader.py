@@ -53,25 +53,46 @@ class RegistryLoader:
     # ── Load ──────────────────────────────────────────────────────────────────
 
     def load_all(self) -> None:
-        """Load (or hot-reload) all *.yaml files from the registry directory."""
+        """Load (or hot-reload) all *.yaml files from the registry directory.
+
+        Builds the new manifest/adapter maps into locals and swaps them in
+        atomically — accessors (which are lock-free) never see a half-populated
+        registry. A reload that yields ZERO manifests while we already have some
+        is treated as a transient filesystem read (watchdog phantom event on a
+        Docker bind mount, a file caught mid-write) and discarded, so the API
+        never goes source-less and stuck until a restart.
+        """
         with self._reload_lock:
             if not self._dir.exists():
-                logger.warning(f"Registry directory '{self._dir}' not found — no plugins loaded")
+                logger.warning(f"Registry directory '{self._dir}' not found — keeping current registry")
                 return
 
-            self._manifests.clear()
-            self._adapters.clear()
+            new_manifests: dict[str, dict] = {}
+            new_adapters: dict[str, DataSourceAdapter] = {}
 
-            yaml_files = sorted(self._dir.glob("*.yaml"))
-            if not yaml_files:
-                logger.warning(f"No YAML manifests found in '{self._dir}'")
-
+            yaml_files = sorted(self._dir.glob("*.yaml")) + sorted(self._dir.glob("*.yml"))
             for path in yaml_files:
                 try:
-                    self._load_one(path)
+                    manifest_id, manifest, adapter = self._parse_one(path)
+                    new_manifests[manifest_id] = manifest
+                    new_adapters[manifest_id] = adapter
                 except Exception as e:
                     logger.error(f"Failed to load manifest '{path.name}': {e}")
 
+            if not new_manifests and self._manifests:
+                logger.error(
+                    "Registry reload found 0 usable manifests but %d were loaded before — "
+                    "keeping the existing set (transient filesystem read, not a real change).",
+                    len(self._manifests),
+                )
+                return
+
+            if not new_manifests:
+                logger.warning(f"No YAML manifests found in '{self._dir}'")
+
+            # Atomic swap — a concurrent accessor sees either the old dict or the new one.
+            self._manifests = new_manifests
+            self._adapters = new_adapters
             self._reload_count += 1
             logger.info(
                 f"Registry (reload #{self._reload_count}): "
@@ -84,8 +105,8 @@ class RegistryLoader:
         except (AttributeError, OSError, ValueError):
             pass  # no SIGHUP on Windows / not the main thread (e.g. under TestClient)
 
-    def _load_one(self, path: Path) -> None:
-        """Parse and validate a single YAML manifest file."""
+    def _parse_one(self, path: Path) -> tuple[str, dict, DataSourceAdapter]:
+        """Parse + validate one YAML manifest. Pure — does not mutate self."""
         with open(path, "r", encoding="utf-8") as f:
             manifest = yaml.safe_load(f)
 
@@ -105,10 +126,9 @@ class RegistryLoader:
                 f"Available: {list(ADAPTER_REGISTRY.keys())}"
             )
 
-        adapter_cls = ADAPTER_REGISTRY[adapter_name]
-        self._manifests[manifest_id] = manifest
-        self._adapters[manifest_id] = adapter_cls(manifest)
-        logger.debug(f"Loaded: {manifest_id} ({adapter_name})")
+        adapter = ADAPTER_REGISTRY[adapter_name](manifest)
+        logger.debug(f"Parsed: {manifest_id} ({adapter_name})")
+        return manifest_id, manifest, adapter
 
     # ── Hot-reload triggers ───────────────────────────────────────────────────
 
@@ -126,6 +146,19 @@ class RegistryLoader:
             "sources": list(self._manifests.keys()),
         }
 
+    def ensure_loaded(self) -> None:
+        """Lazy self-heal: if this worker's registry is somehow empty (a bad
+        watcher reload got past the guard on a cold worker, the watcher thread
+        died, etc.), reload it now. Cheap no-op in the normal case. Called from
+        the read endpoints so a wiped worker recovers on the next request
+        instead of serving empty dropdowns until a restart."""
+        if not self._manifests:
+            logger.warning("Registry empty on access — forcing a reload")
+            try:
+                self.load_all()
+            except Exception as e:
+                logger.error(f"ensure_loaded reload failed: {e}")
+
     def start_watcher(self) -> None:
         """
         Start a watchdog filesystem observer that automatically hot-reloads
@@ -139,8 +172,16 @@ class RegistryLoader:
             return
 
         try:
-            from watchdog.observers import Observer
-            from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent
+            from watchdog.events import FileSystemEventHandler
+            # Native (inotify) observers are unreliable on Docker Desktop bind mounts
+            # (gRPC-FUSE / virtiofs) — they miss events and can emit phantom
+            # delete/create pairs where a glob briefly sees an empty directory.
+            # PollingObserver just stats the (tiny) registry dir on an interval and
+            # is rock-solid across mount types. Override with REGISTRY_WATCH_NATIVE=1.
+            if os.getenv("REGISTRY_WATCH_NATIVE", "").strip().lower() in ("1", "true", "yes"):
+                from watchdog.observers import Observer
+            else:
+                from watchdog.observers.polling import PollingObserver as Observer
         except ImportError:
             logger.warning("watchdog not installed — filesystem hot-reload disabled. Run: pip install watchdog")
             return
@@ -148,35 +189,56 @@ class RegistryLoader:
         registry_loader = self  # capture reference for the handler closure
 
         class YAMLChangeHandler(FileSystemEventHandler):
-            """Watchdog event handler — reacts to YAML file changes."""
+            """Watchdog event handler — debounced so a burst of events (common on
+            Docker Desktop bind mounts, where a single save can emit several
+            modified/created events, sometimes with the file briefly unreadable)
+            triggers exactly one reload once things go quiet."""
+
+            _DEBOUNCE_SEC = 0.8
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._timer: threading.Timer | None = None
+                self._timer_lock = threading.Lock()
+                self._pending: set[str] = set()
 
             def _is_yaml(self, path: str) -> bool:
                 return path.endswith(".yaml") or path.endswith(".yml")
 
-            def on_modified(self, event):
-                if not event.is_directory and self._is_yaml(event.src_path):
-                    fname = Path(event.src_path).name
-                    logger.info(f"Registry watcher: '{fname}' modified — reloading...")
-                    registry_loader.reload()
+            def _schedule(self, event) -> None:
+                if event.is_directory or not self._is_yaml(event.src_path):
+                    return
+                with self._timer_lock:
+                    self._pending.add(Path(event.src_path).name)
+                    if self._timer is not None:
+                        self._timer.cancel()
+                    self._timer = threading.Timer(self._DEBOUNCE_SEC, self._fire)
+                    self._timer.daemon = True
+                    self._timer.start()
 
-            def on_created(self, event):
-                if not event.is_directory and self._is_yaml(event.src_path):
-                    fname = Path(event.src_path).name
-                    logger.info(f"Registry watcher: '{fname}' created — reloading...")
+            def _fire(self) -> None:
+                with self._timer_lock:
+                    changed = sorted(self._pending)
+                    self._pending.clear()
+                    self._timer = None
+                logger.info(f"Registry watcher: {', '.join(changed)} changed — reloading (debounced)")
+                try:
                     registry_loader.reload()
+                except Exception as e:
+                    logger.error(f"Registry watcher: debounced reload failed: {e}")
 
-            def on_deleted(self, event):
-                if not event.is_directory and self._is_yaml(event.src_path):
-                    fname = Path(event.src_path).name
-                    logger.info(f"Registry watcher: '{fname}' deleted — reloading...")
-                    registry_loader.reload()
+            on_modified = _schedule
+            on_created = _schedule
+            on_deleted = _schedule
 
         observer = Observer()
         observer.schedule(YAMLChangeHandler(), str(self._dir), recursive=False)
         observer.daemon = True  # dies cleanly when main process exits
         observer.start()
         self._observer = observer
-        logger.info(f"Registry watcher started — watching '{self._dir}' for YAML changes")
+        logger.info(
+            f"Registry watcher started ({type(observer).__name__}) — watching '{self._dir}'"
+        )
 
     def stop_watcher(self) -> None:
         """Stop the filesystem observer. Called from lifespan shutdown."""

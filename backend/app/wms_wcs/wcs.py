@@ -147,6 +147,7 @@ async def wcs(
     SUBSET_depth: Optional[str] = Query(None, alias="SUBSET[depth]"),
     SUBSET_lat: Optional[str] = Query(None, alias="SUBSET[latitude]"),
     SUBSET_lon: Optional[str] = Query(None, alias="SUBSET[longitude]"),
+    RANGESUBSET: Optional[str] = Query(None, description="WCS 2.0 range subset — variable/band name to export"),
     FORMAT: Optional[str] = Query("application/x-netcdf4"),
 ):
     """
@@ -167,7 +168,7 @@ async def wcs(
     elif req_upper == "GETCOVERAGE":
         if not COVERAGEID:
             raise HTTPException(400, "COVERAGEID is required for GetCoverage")
-        return await _get_coverage(request, COVERAGEID, SUBSET_time, SUBSET_depth, SUBSET_lat, SUBSET_lon)
+        return await _get_coverage(request, COVERAGEID, SUBSET_time, SUBSET_depth, SUBSET_lat, SUBSET_lon, RANGESUBSET)
     else:
         raise HTTPException(400, f"Unsupported WCS REQUEST: '{REQUEST}'. Supported: GetCapabilities, DescribeCoverage, GetCoverage")
 
@@ -225,6 +226,7 @@ async def _get_coverage(
     subset_depth: Optional[str],
     subset_lat: Optional[str],
     subset_lon: Optional[str],
+    range_subset: Optional[str] = None,
 ) -> Response:
     """
     Return a NetCDF4 file subset.
@@ -278,7 +280,9 @@ async def _get_coverage(
         n_time  = dims.get("time",  1)
         depth_levels = meta.get("depth_levels") or [0]
         n_depth = len(depth_levels)
-        variable = meta["available_variables"][0]
+        avail = meta["available_variables"]
+        # WCS 2.0 RangeSubset — let the caller pick which variable/band to export.
+        variable = range_subset if (range_subset and range_subset in avail) else avail[0]
 
         t0, t1 = time_range  if time_range  else (0, n_time  - 1)
         d0, d1 = depth_range if depth_range else (0, n_depth - 1)
@@ -353,14 +357,15 @@ async def _get_coverage(
             lonv.units = "degrees_east"; lonv.standard_name = "longitude"
             lonv[:] = coord_lon
 
-        var_name = manifest.get("variable", coverage_id)
+        var_name = variable
+        vcf = (meta.get("cf_metadata") or {}).get(variable, {})
         v = ds.createVariable(var_name, "f4", ("time", "depth", "latitude", "longitude"),
                               fill_value=manifest.get("missing_value", -30000.0), zlib=True, complevel=4)
-        v.standard_name = manifest.get("standard_name", "")
-        v.long_name      = manifest.get("long_name", "")
-        v.units          = manifest.get("units", "1")
-        v.valid_min      = manifest.get("valid_min", -1e9)
-        v.valid_max      = manifest.get("valid_max",  1e9)
+        v.standard_name = vcf.get("standard_name") or manifest.get("standard_name", "")
+        v.long_name      = vcf.get("long_name") or manifest.get("long_name", "")
+        v.units          = vcf.get("units") or manifest.get("units", "1")
+        v.valid_min      = vcf.get("valid_min", manifest.get("valid_min", -1e9))
+        v.valid_max      = vcf.get("valid_max", manifest.get("valid_max",  1e9))
         v[:] = arr
 
         ds.close()

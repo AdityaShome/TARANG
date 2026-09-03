@@ -755,37 +755,66 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     }
 
     if (lv.vectors) {
-      Promise.all([
-        fetchSlice({ source: ctx.currentSource, var: 'uo', depth: 0, time: activeTimeIdx, bbox }, abort.signal),
-        fetchSlice({ source: ctx.currentSource, var: 'vo', depth: 0, time: activeTimeIdx, bbox }, abort.signal),
-      ])
-        .then(([uR, vR]) => {
-          if (!ctx.alive.v || abort.signal.aborted) return
-          const [latN, lonN] = uR.header.shape
-          const u = uR.data, v = vR.data
-          const { lon: [loA, loB], lat: [laA, laB] } = uR.header.bounds
-          const stepJ = Math.max(1, Math.ceil(lonN / 16))
-          const stepI = Math.max(1, Math.ceil(latN / 16))
-          const arrowGeo = new THREE.ConeGeometry(0.09, 0.5, 6)
-          const arrowMat = overlayMat(0x00e5ff)
-          const up = new THREE.Vector3(0, 1, 0)
-          for (let i = 0; i < latN; i += stepI) {
-            for (let j = 0; j < lonN; j += stepJ) {
-              const uu = u[i * lonN + j], vv = v[i * lonN + j]
-              const spd = Math.hypot(uu, vv)
-              if (!isFinite(spd) || spd < 1e-3 || spd > 50) continue
-              const lon = loA + (loB - loA) * (j / (lonN - 1))
-              const lat = laA + (laB - laA) * (i / (latN - 1))
-              const a = new THREE.Mesh(arrowGeo, arrowMat)
-              a.position.copy(project(lon, lat, 0)).setY(HOVER)
-              a.quaternion.setFromUnitVectors(up, new THREE.Vector3(uu, 0, -vv).normalize())
-              a.scale.setY(Math.min(0.6 + spd * 2.5, 2.6))
-              a.renderOrder = 5
-              overlayGroup.add(a)
+      // Depth-resolved current vectors: uo/vo sampled at 3 levels through the water
+      // column (Copernicus Marine, 40 levels), one clean arrow sheet per level — the
+      // PS's "current vectors across the full water column". Arrows are drawn over the
+      // volume (depthTest off) and speed-shaded cyan→white so they stay readable.
+      const VECTOR_SOURCE_3D = 'copernicus_marine'
+      // Pick levels by DEPTH IN METRES, not by index — Copernicus levels are so dense near
+      // the surface that index fractions barely move you down the box. Snap each target to
+      // the nearest actual level so the sheets are visibly spread through the column.
+      const maxD = depthLevels.length ? depthLevels[depthLevels.length - 1] : 500
+      const targets = [5, 0.15 * maxD, 0.45 * maxD, 0.8 * maxD]
+      const nearest = (t: number) => depthLevels.reduce((b, d) => (Math.abs(d - t) < Math.abs(b - t) ? d : b), depthLevels[0] ?? 0)
+      const levels = depthLevels.length ? Array.from(new Set(targets.map(nearest))) : [0]
+      const up = new THREE.Vector3(0, 1, 0)
+      const arrowGeo = new THREE.ConeGeometry(0.07, 0.36, 6)
+      for (const depthM of levels) {
+        Promise.all([
+          fetchSlice({ source: VECTOR_SOURCE_3D, var: 'uo', depth: depthM, time: activeTimeIdx, bbox }, abort.signal),
+          fetchSlice({ source: VECTOR_SOURCE_3D, var: 'vo', depth: depthM, time: activeTimeIdx, bbox }, abort.signal),
+        ])
+          .then(([uR, vR]) => {
+            if (!ctx.alive.v || abort.signal.aborted) return
+            const [latN, lonN] = uR.header.shape
+            const u = uR.data, v = vR.data
+            const { lon: [loA, loB], lat: [laA, laB] } = uR.header.bounds
+            const stepJ = Math.max(1, Math.ceil(lonN / 11))
+            const stepI = Math.max(1, Math.ceil(latN / 11))
+            // Faint translucent sheet so each level reads as a distinct plane.
+            const p00 = project(loA, laA, depthM), p11 = project(loB, laB, depthM)
+            const sheet = new THREE.Mesh(
+              new THREE.PlaneGeometry(Math.abs(p11.x - p00.x), Math.abs(p11.z - p00.z)),
+              new THREE.MeshBasicMaterial({ color: 0x0a3550, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false }),
+            )
+            sheet.rotation.x = -Math.PI / 2
+            sheet.position.set((p00.x + p11.x) / 2, project(0, 0, depthM).y, (p00.z + p11.z) / 2)
+            sheet.renderOrder = 4
+            overlayGroup.add(sheet)
+
+            // 3 shared materials (slow / medium / fast) — cheap, and disposed with the group.
+            const mats = [0.55, 0.72, 0.92].map(l => new THREE.MeshBasicMaterial({
+              color: new THREE.Color().setHSL(0.52, 0.85, l), transparent: true, opacity: 0.95, depthTest: false,
+            }))
+            for (let i = 0; i < latN; i += stepI) {
+              for (let j = 0; j < lonN; j += stepJ) {
+                const uu = u[i * lonN + j], vv = v[i * lonN + j]
+                const spd = Math.hypot(uu, vv)
+                if (!isFinite(spd) || spd < 1e-3 || spd > 50) continue
+                const lon = loA + (loB - loA) * (j / (lonN - 1))
+                const lat = laA + (laB - laA) * (i / (latN - 1))
+                const k = Math.min(1, spd / 0.6)
+                const a = new THREE.Mesh(arrowGeo, mats[k > 0.66 ? 2 : k > 0.33 ? 1 : 0])
+                a.position.copy(project(lon, lat, depthM))
+                a.quaternion.setFromUnitVectors(up, new THREE.Vector3(uu, 0, -vv).normalize())
+                a.scale.setY(0.9 + k * 1.3)
+                a.renderOrder = 6
+                overlayGroup.add(a)
+              }
             }
-          }
-        })
-        .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
+          })
+          .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
+      }
     }
 
     return () => { abort.abort() }

@@ -117,11 +117,21 @@ export interface DepthProfile {
   model_salinity?: number[] | null
   delta_salinity?: number[] | null
   chlorophyll?: number[] | null     // BGC floats only
+  oxygen?: number[] | null          // BGC floats
+  nitrate?: number[] | null
+  ph?: number[] | null
+  current_speed?: number[] | null   // ADCP / mooring current profiles
+  current_u?: number[] | null
+  current_v?: number[] | null
   units: {
     depth:       string
     temperature: string
     salinity:    string
     chlorophyll?: string
+    oxygen?: string
+    nitrate?: string
+    ph?: string
+    current_speed?: string
   }
 }
 

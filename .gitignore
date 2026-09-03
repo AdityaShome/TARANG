@@ -22,8 +22,14 @@ data/argo/
 data/glider/
 data/ctd/
 data/bgc/
+data/mooring/
+data/adcp/
+data/uploads/
 # Keep fixture for CI
 !data/fixture/
+
+# Auto-generated registry manifests from POST /api/registry/upload (runtime, not source)
+registry/*.uploaded.yaml
 
 # Environment
 .env

@@ -266,6 +266,8 @@ export const useTarangStore = create<TarangState>()(
       eddy:       false,
       fronts:     false,
       delta:      false,
+      waterMasses: false,
+      flow:       false,
     },
 
     // ── Actions ───────────────────────────────────────────────────────────────

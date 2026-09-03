@@ -39,3 +39,34 @@ export function prewarmIndiaRegion(source: string, variable: string): void {
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
 }
+
+// ── Time-step prefetch for smooth animation ───────────────────────────────────
+// Playback advances activeTimeIdx on a timer; each step triggers a fresh /api/slice
+// fetch. Warming every step in the background first (backend caches to Redis, and
+// the client dedupes) means the player advances into already-computed frames
+// instead of stalling on a cold fetch mid-loop.
+
+const _warmedLoops = new Set<string>()
+
+export function prewarmTimeSteps(params: {
+  source: string
+  variable: string
+  depth: number
+  bbox: [number, number, number, number]
+  nSteps: number
+}): void {
+  const { source, variable, depth, bbox, nSteps } = params
+  if (!source || !variable || nSteps <= 1) return
+  const loopKey = `${source}:${variable}:${depth}:${bbox.join(',')}:${nSteps}`
+  if (_warmedLoops.has(loopKey)) return
+  _warmedLoops.add(loopKey)
+  if (_warmedLoops.size > 12) _warmedLoops.delete(_warmedLoops.values().next().value as string)
+
+  void (async () => {
+    for (let t = 0; t < nSteps; t++) {
+      try { await fetchSlice({ source, var: variable, depth, time: t, bbox }) }
+      catch { /* best-effort; a failed frame just isn't pre-warmed */ }
+      await sleep(120)   // gentle — don't stampede the backend workers
+    }
+  })()
+}

@@ -18,7 +18,7 @@ import type {
   SliceHeader, VolumeHeader, IsosurfaceHeader,
 } from './types'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 // ── In-flight request deduplication ──────────────────────────────────────────
 const _inflight = new Map<string, Promise<unknown>>()
@@ -147,6 +147,33 @@ export async function fetchSources(signal?: AbortSignal): Promise<SourceEntry[]>
   if (!res.ok) throw new Error(`fetchSources failed: ${res.status}`)
   const json = await res.json()
   return json.sources as SourceEntry[]
+}
+
+export interface UploadedSource {
+  id: string
+  label: string
+  adapter: string
+  variable: string
+  all_variables: string[]
+  bbox: [number, number, number, number]
+  depth_levels: number[]
+  n_times: number
+  render_type: string
+  warnings: string[]
+}
+
+/** Upload a NetCDF/CSV file; backend introspects it and registers a new source. */
+export async function uploadDataSource(file: File, label?: string): Promise<UploadedSource> {
+  const form = new FormData()
+  form.append('file', file)
+  if (label) form.append('label', label)
+  const res = await fetch(`${API_BASE}/registry/upload`, { method: 'POST', body: form })
+  if (!res.ok) {
+    let msg = `Upload failed (${res.status})`
+    try { const j = await res.json(); if (j?.detail) msg = typeof j.detail === 'string' ? j.detail : msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  return res.json() as Promise<UploadedSource>
 }
 
 /** Get metadata for one source — drives all frontend selectors. */
