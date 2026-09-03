@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useTarangStore } from './state/store'
 import { fetchSources, fetchMetadata } from './api/client'
+import { buildTimeStepLabels } from './api/time'
 import { prewarmIndiaRegion } from './api/prewarm'
 import { ForecasterConsole } from './modes/ForecasterConsole'
 import { ExplorerMode } from './modes/ExplorerMode'
@@ -47,10 +48,11 @@ export default function App() {
         // 2. Load metadata for the active source (drives selectors)
         const meta = await fetchMetadata(activeSourceId, controller.signal)
         setDepthLevels(meta.depth_levels)
-        setTimeSteps(meta.time_range?.steps
-          ? Array.from({ length: meta.time_range.steps }, (_, i) => `T+${i}`)
-          : []
-        )
+        setTimeSteps(buildTimeStepLabels(
+          meta.time_range?.start,
+          meta.time_range?.end,
+          meta.time_range?.steps,
+        ))
 
         // Feed the variable dropdown; setActiveVar seeds the colour range from CF metadata.
         setVariableMeta(meta.available_variables, meta.cf_metadata)
