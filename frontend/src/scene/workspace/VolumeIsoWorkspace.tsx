@@ -6,7 +6,8 @@ import { Legend } from '../../components/Legend'
 import { fetchVolume, fetchIsosurface, fetchInstruments, fetchSlice } from '../../api/client'
 import { fetchEddyDetection, fetchFrontDetection } from '../../api/eddy'
 import { computeDataRange } from '../layers/dataStats'
-import type { RenderMode, ColormapName } from '../../api/types'
+import type { RenderMode } from '../../api/types'
+import { buildColormapLUT } from '../colormaps'
 
 import volumeVertShader from '../shaders/volumeVert.glsl?raw'
 import workspaceVolumeFrag from '../shaders/workspaceVolumeFrag.glsl?raw'
@@ -59,11 +60,6 @@ function depthWorldFor(verticalExaggeration: number): number {
 // Set true only if a data source ever returns lat rows running north→south (the shader / iso
 // reprojection then mirror the lat axis). Fixtures + Copernicus are south→north, so: false.
 const LAT_FLIP = false
-
-// Must match workspaceVolumeFrag.glsl's u_colormap branches (same order as the globe shaders).
-const COLORMAP_INDEX: Record<ColormapName, number> = {
-  viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
-}
 
 // Instrument marker colours come from the store (user-customizable via InstrumentLegend) —
 // one palette everywhere: globe, 2D map, and this workspace.
@@ -198,6 +194,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
   const depthLevels = useTarangStore(s => s.depthLevels)
   const cfMetadata = useTarangStore(s => s.cfMetadata)
   const colormapName = useTarangStore(s => s.colormap.name)
+  const colormapReversed = useTarangStore(s => s.colormap.reversed)
   const colormapLog = useTarangStore(s => s.colormap.logScale)
   const verticalExaggeration = useTarangStore(s => s.colormap.verticalExaggeration)
   const setSelectedPlatform = useTarangStore(s => s.setSelectedPlatform)
@@ -529,7 +526,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
         old?.dispose?.()
         ;(u.u_clim.value as THREE.Vector2).set(dataMin, dataMax)
         u.u_missing.value = frame.header.missing_value ?? -9999.0
-        u.u_colormap.value = COLORMAP_INDEX[colormapName] ?? 0
+        u.u_cmap.value = buildColormapLUT(colormapName, colormapReversed)
         u.u_log_scale.value = colormapLog ? 1 : 0
       } else {
         disposeMesh()
@@ -542,7 +539,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
             u_clim: { value: new THREE.Vector2(dataMin, dataMax) },
             u_opacity: { value: 0.9 },
             u_missing: { value: frame.header.missing_value ?? -9999.0 },
-            u_colormap: { value: COLORMAP_INDEX[colormapName] ?? 0 },
+            u_cmap: { value: buildColormapLUT(colormapName, colormapReversed) },
             u_log_scale: { value: colormapLog ? 1 : 0 },
             u_lat_flip: { value: LAT_FLIP ? 1 : 0 },
           },
@@ -638,7 +635,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     // resets volumeCtxRef) when they change — the data mesh must then be rebuilt into the new box.
   }, [
     mode, bbox, activeSourceId, activeVar, activeTimeIdx, isoThreshold,
-    colormapName, colormapLog, depthLevels, verticalExaggeration, setColormap,
+    colormapName, colormapReversed, colormapLog, depthLevels, verticalExaggeration, setColormap,
   ])
 
   // ── Background prefetch of every time step (volume mode) ───────────────────

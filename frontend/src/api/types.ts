@@ -177,10 +177,17 @@ export interface SourceEntry {
 }
 
 // ── Colourmap config ──────────────────────────────────────────────────────────
-export type ColormapName = 'viridis' | 'plasma' | 'magma' | 'inferno' | 'jet'
+// Palette stops live in scene/colormaps.ts (PALETTES) — the single source of truth
+// for the shader LUT textures and the 2D renderers. Keep this union in sync with
+// that object's keys.
+export type ColormapName =
+  | 'viridis' | 'plasma' | 'magma' | 'inferno'
+  | 'thermal' | 'haline' | 'deep' | 'dense' | 'balance' | 'curl' | 'ice'
+  | 'jet' | 'grayscale'
 
 export interface ColormapConfig {
   name:      ColormapName
+  reversed:  boolean       // flip the palette direction
   min:       number        // overrides valid_min if set
   max:       number        // overrides valid_max if set
   logScale:  boolean

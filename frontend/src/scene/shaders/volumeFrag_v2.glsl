@@ -11,8 +11,9 @@ uniform float u_opacity;
 uniform float u_missing;
 uniform int u_renderstyle;   // 0: MIP, 1: ISO
 uniform float u_iso_threshold;
-uniform float u_colormap;    // 0=viridis 1=plasma 2=magma 3=inferno 4=jet — see colormapFrag.glsl
+uniform float u_colormap;    // legacy, unused — palette now comes from u_cmap
 uniform float u_log_scale;   // 0=linear 1=log
+uniform sampler2D u_cmap;    // 256×1 palette LUT — see scene/colormaps.ts
 uniform int u_debug;         // 0=off  1=hit test  2=entry uvw  3=valid-sample count  4=raw max
 
 
@@ -45,19 +46,8 @@ vec3 jetMap(float t) {
         clamp(min(1.5 - abs(2.0*t - 0.5), 1.0), 0.0, 1.0));
 }
 vec3 safeColormap(float t) {
-    // else-if, not independent `if (cond) return` — see the identical fix/comment in
-    // colormapFrag.glsl's applyColormap for why (ANGLE GLSL->HLSL translation quirk).
-    if (u_colormap < 0.5) {
-        return viridis(t);
-    } else if (u_colormap < 1.5) {
-        return plasma(t);
-    } else if (u_colormap < 2.5) {
-        return magma(t);
-    } else if (u_colormap < 3.5) {
-        return inferno(t);
-    } else {
-        return jetMap(t);
-    }
+    // Palette LUT (scene/colormaps.ts) — choice + reverse baked in on the JS side.
+    return texture(u_cmap, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
 }
 float normalize_val(float val) {
     if (u_log_scale > 0.5) {

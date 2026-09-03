@@ -23,6 +23,7 @@ uniform float     u_opacity;
 uniform vec3 u_seabedColor;   // bottom face colour
 uniform vec3 u_deepColor;     // deep water body colour
 uniform vec3 u_surfaceColor;  // surface water colour
+uniform sampler2D u_cmap;     // 256×1 palette LUT — see scene/colormaps.ts
 
 // Seabed face thickness in local Z [0,1]
 const float SEABED = 0.025;
@@ -69,7 +70,7 @@ void main() {
         bool valid = (val == val) && (val != u_missing) && (val > -1.0e4) && (val < 1.0e4);
         if (valid) {
             float norm = clamp((val - u_clim.x) / max(u_clim.y - u_clim.x, 1e-6), 0.0, 1.0);
-            dataCol = viridis(norm);
+            dataCol = texture(u_cmap, vec2(norm, 0.5)).rgb;
             dataBlend = 0.55;  // blend 55% data colour, 45% gradient
         }
     }

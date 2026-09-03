@@ -5,14 +5,9 @@ import { useTarangStore } from '../../state/store'
 
 import vertShader from '../shaders/volumeVert.glsl?raw'
 import fragShader from '../shaders/volumeFrag_v2.glsl?raw'
-import type { ColormapName } from '../../api/types'
+import { buildColormapLUT } from '../colormaps'
 import { EARTH_RADIUS, surfaceBasis } from './sphereUtils'
 import { computeDataRange } from './dataStats'
-
-// Must match the u_colormap branches in the shaders.
-const COLORMAP_INDEX: Record<ColormapName, number> = {
-  viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
-}
 
 const DEG_TO_WORLD = (Math.PI * EARTH_RADIUS) / 180 // world units per degree of lat/lon
 
@@ -51,6 +46,7 @@ export class VolumeLayer implements Layer {
         u_iso_threshold: { value: 20.0 },
         u_colormap: { value: 0 },
         u_log_scale: { value: 0 },
+        u_cmap: { value: buildColormapLUT('viridis', false) },
         u_debug: { value: readDebugFlag() },
       },
       transparent: true,
@@ -120,7 +116,7 @@ export class VolumeLayer implements Layer {
         this.material.uniforms.u_clim.value.set(dataMin, dataMax)
         useTarangStore.getState().setColormap({ min: dataMin, max: dataMax })
         this.material.uniforms.u_missing.value = header.missing_value ?? -9999.0
-        this.material.uniforms.u_colormap.value = COLORMAP_INDEX[state.colormap.name] ?? 0
+        this.material.uniforms.u_cmap.value = buildColormapLUT(state.colormap.name, state.colormap.reversed)
         this.material.uniforms.u_log_scale.value = state.colormap.logScale ? 1 : 0
 
         const widthDeg = header.bounds.lon[1] - header.bounds.lon[0]

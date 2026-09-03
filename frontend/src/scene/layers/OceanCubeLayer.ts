@@ -26,6 +26,7 @@ import { computeDataRange } from './dataStats'
 
 import vertShader from '../shaders/oceanCubeVert.glsl?raw'
 import fragShader from '../shaders/oceanCubeFrag.glsl?raw'
+import { buildColormapLUT } from '../colormaps'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,7 @@ export class OceanCubeLayer implements Layer {
         u_seabedColor:  { value: SEABED_COLOR },
         u_deepColor:    { value: DEEP_COLOR },
         u_surfaceColor: { value: SURFACE_COLOR },
+        u_cmap:         { value: buildColormapLUT('viridis', false) },
       },
       transparent: true,
       side:        THREE.DoubleSide,   // visible from inside AND below (seabed view)
@@ -147,6 +149,7 @@ export class OceanCubeLayer implements Layer {
 
       const state      = useTarangStore.getState()
       const vExag      = state.colormap.verticalExaggeration || 50
+      this.cubeMat.uniforms.u_cmap.value = buildColormapLUT(state.colormap.name, state.colormap.reversed)
       const maxDepthM  = (() => {
         if (volumeResult.status === 'fulfilled') {
           return Math.max(...volumeResult.value.header.depth_levels)

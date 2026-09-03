@@ -2,6 +2,17 @@ import React, { useMemo, useState, useEffect } from 'react'
 import { useTarangStore, debounce } from '../state/store'
 import { useT } from '../i18n/useT'
 import type { TranslationKey } from '../i18n/translations'
+import { colormapGradientCSS } from '../scene/colormaps'
+
+// Grouped so the dropdown reads as a curated set, not a dump. cmocean palettes are
+// the oceanography-standard choice (thermal→temperature, haline→salinity,
+// balance/curl→anomalies, deep→depth); matplotlib set kept for familiarity.
+const PALETTE_GROUPS: { label: string; names: string[] }[] = [
+  { label: 'Ocean (cmocean)', names: ['thermal', 'haline', 'deep', 'dense', 'ice'] },
+  { label: 'Diverging (anomalies)', names: ['balance', 'curl'] },
+  { label: 'Perceptual', names: ['viridis', 'plasma', 'magma', 'inferno'] },
+  { label: 'Other', names: ['jet', 'grayscale'] },
+]
 
 /**
  * ControlPanel — Container for all Forecaster Console controls.
@@ -211,18 +222,40 @@ export function ControlPanel() {
 
       {/* ── Colormap ─────────────────────────────────────────────────── */}
       <Section label={t('colormap')}>
-        <Select
+        <select
           id="colormap-select"
           value={colormap.name}
           onChange={e => setColormapName(e.target.value as any)}
-          options={[
-            { value: 'viridis', label: 'Viridis' },
-            { value: 'plasma',  label: 'Plasma'  },
-            { value: 'magma',   label: 'Magma'   },
-            { value: 'inferno', label: 'Inferno' },
-            { value: 'jet',     label: 'Jet'     },
-          ]}
+          style={styles.select}
+        >
+          {PALETTE_GROUPS.map(g => (
+            <optgroup key={g.label} label={g.label} style={{ background: '#001e3c' }}>
+              {g.names.map(n => (
+                <option key={n} value={n} style={{ background: '#001e3c', color: '#a0c4e8' }}>
+                  {n.charAt(0).toUpperCase() + n.slice(1)}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {/* Live gradient preview — reflects palette choice + reverse toggle */}
+        <div
+          style={{
+            height: '12px', borderRadius: '3px', marginTop: '2px',
+            border: '1px solid rgba(255,255,255,0.15)',
+            background: colormapGradientCSS(colormap.name, colormap.reversed, 'to right'),
+          }}
         />
+        <label style={styles.checkRow}>
+          <input
+            id="reverse-palette-toggle"
+            type="checkbox"
+            checked={colormap.reversed}
+            onChange={() => setColormap({ reversed: !colormap.reversed })}
+            style={{ accentColor: '#00d4ff' }}
+          />
+          <span style={{ color: '#a0c4e8', fontSize: '13px' }}>{t('reversePalette')}</span>
+        </label>
         <label style={styles.checkRow}>
           <input
             id="log-scale-toggle"

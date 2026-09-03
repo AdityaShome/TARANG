@@ -7,6 +7,7 @@ import { fetchSlice, fetchInstruments } from '../api/client'
 import { fetchEddyDetection, fetchFrontDetection } from '../api/eddy'
 import { clampRegionSpan, REGION_MAX_PICK_SPAN_DEG } from '../api/geocode'
 import { computeDataRange } from './layers/dataStats'
+import { PALETTES, samplePalette } from './colormaps'
 import landGeo from '../assets/ne_110m_land.json'
 
 // Independent overlays share the globe's conventions: currents from a currents source, eddies
@@ -32,30 +33,16 @@ const INDIA_BOUNDS = L.latLngBounds([-4, 50], [30, 102])
 // The India-ocean area of interest, drawn as a persistent reference frame on the map.
 const INDIA_AOI: L.LatLngBoundsExpression = [[-2, 55], [26, 100]]
 
-// Palettes — the same 5 stops as colormapFrag.glsl / Legend.tsx, as [r,g,b].
-const PALETTES: Record<string, number[][]> = {
-  viridis: [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
-  plasma:  [[13, 8, 135], [126, 3, 168], [204, 71, 120], [248, 149, 65], [240, 249, 33]],
-  magma:   [[0, 0, 4], [59, 15, 112], [140, 41, 129], [222, 73, 104], [252, 253, 191]],
-  inferno: [[0, 0, 4], [66, 10, 104], [147, 38, 103], [221, 81, 58], [252, 255, 164]],
-  jet:     [[0, 0, 127], [0, 255, 255], [127, 255, 127], [255, 255, 0], [127, 0, 0]],
-}
-
-
-function samplePalette(stops: number[][], t: number): [number, number, number] {
-  t = Math.min(1, Math.max(0, t)) * (stops.length - 1)
-  const i = Math.floor(t), f = t - i
-  const a = stops[i], b = stops[Math.min(i + 1, stops.length - 1)]
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
-}
+// Palette stops come from scene/colormaps.ts — one source of truth shared with the
+// globe shaders and the HTML legend.
 
 // Slice grid (lat,lon row-major, row 0 = south) → RGBA canvas (row 0 = north). Land / missing
 // cells render transparent so the basemap land shows through.
 function gridToDataURL(
   data: Float32Array, lonSize: number, latSize: number,
-  missing: number, min: number, max: number, paletteName: string,
+  missing: number, min: number, max: number, paletteName: string, reversed: boolean,
 ): string {
-  const stops = PALETTES[paletteName] ?? PALETTES.viridis
+  const stops = PALETTES[paletteName as keyof typeof PALETTES] ?? PALETTES.viridis
   const canvas = document.createElement('canvas')
   canvas.width = lonSize
   canvas.height = latSize
@@ -72,7 +59,8 @@ function gridToDataURL(
         img.data[di + 3] = 0
         continue
       }
-      const [r, g, b] = samplePalette(stops, (v - min) / span)
+      const norm = (v - min) / span
+      const [r, g, b] = samplePalette(stops, reversed ? 1 - norm : norm)
       img.data[di] = r; img.data[di + 1] = g; img.data[di + 2] = b; img.data[di + 3] = 235
     }
   }
@@ -100,6 +88,7 @@ export function IndiaMapView() {
   const activeDepthIdx = useTarangStore(s => s.activeDepthIdx)
   const activeTimeIdx = useTarangStore(s => s.activeTimeIdx)
   const colormapName = useTarangStore(s => s.colormap.name)
+  const colormapReversed = useTarangStore(s => s.colormap.reversed)
   const layerVisibility = useTarangStore(s => s.layerVisibility)
   const instrumentColors = useTarangStore(s => s.instrumentColors)
   const renderMode = useTarangStore(s => s.renderMode)
@@ -267,7 +256,7 @@ export function IndiaMapView() {
           useTarangStore.getState().setColormap({ min: dMin, max: dMax })
           useTarangStore.getState().setRegionDataMissing(false)
 
-          const url = gridToDataURL(data, lonSize, latSize, header.missing_value, dMin, dMax, colormapName)
+          const url = gridToDataURL(data, lonSize, latSize, header.missing_value, dMin, dMax, colormapName, colormapReversed)
           const b = L.latLngBounds([header.bounds.lat[0], header.bounds.lon[0]], [header.bounds.lat[1], header.bounds.lon[1]])
           if (overlayRef.current) overlayRef.current.remove()
           overlayRef.current = L.imageOverlay(url, b, { pane: 'data', opacity: 0.92, interactive: false }).addTo(map)
@@ -281,8 +270,8 @@ export function IndiaMapView() {
         }
       }
     })()
-  // colormapName included so a palette change re-renders the raster
-  }, [bbox, hasSearchedRegion, activeSourceId, activeVar, activeDepthIdx, activeTimeIdx, colormapName, layerVisibility, renderMode])
+  // colormapName / colormapReversed included so a palette change re-renders the raster
+  }, [bbox, hasSearchedRegion, activeSourceId, activeVar, activeDepthIdx, activeTimeIdx, colormapName, colormapReversed, layerVisibility, renderMode])
 
   // ── Region box + instrument markers ────────────────────────────────────
   useEffect(() => {

@@ -241,6 +241,13 @@ export const translations = {
     te: 'లాగ్ స్కేల్',
     ta: 'லாக் அளவீடு',
   },
+  reversePalette: {
+    en: 'Reverse palette',
+    hi: 'पैलेट उलटें',
+    bn: 'প্যালেট উল্টান',
+    te: 'పాలెట్ తిప్పండి',
+    ta: 'நிறத்தட்டை தலைகீழாக்கு',
+  },
   min: {
     en: 'Min',
     hi: 'न्यूनतम',
