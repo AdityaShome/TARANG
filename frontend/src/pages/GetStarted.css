@@ -1,0 +1,127 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+.gs-root {
+  --cyan: #2fd3f5;
+  --cyan-dim: rgba(47, 211, 245, 0.14);
+  --violet: #9b6ef5;
+  --bg-panel: rgba(8, 22, 38, 0.55);
+  --bg-panel-alt: rgba(10, 28, 48, 0.5);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --text: #eaf3fa;
+  --muted: #8ea1b3;
+  --teal-text: #4fd9c7;
+  font-family: 'Inter', sans-serif;
+  color: var(--text);
+}
+.gs-root h1, .gs-root h2, .gs-root h3, .gs-root h4 { font-family: 'Space Grotesk', sans-serif; margin: 0; }
+
+/* Transparent on purpose — this renders as an overlay on top of the live 3D globe
+   (ExplorerMode's scene), the same way HomeOverlay does. A faint scrim keeps text
+   readable without hiding the globe. */
+.gs-page {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: radial-gradient(ellipse at top right, rgba(10, 28, 48, 0.35) 0%, rgba(5, 11, 20, 0.72) 65%);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.gs-card, .gs-intro-card, .gs-footer-card, .gs-back-btn, .gs-close-btn, .gs-tip {
+  backdrop-filter: blur(8px);
+}
+
+.gs-top-bar { display: flex; align-items: center; justify-content: space-between; padding: 24px 34px; flex-shrink: 0; }
+.gs-back-btn {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-panel); border: 1px solid var(--border-strong); color: var(--text);
+  padding: 9px 16px; border-radius: 9px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  font-family: 'Inter', sans-serif;
+}
+.gs-back-btn:hover { border-color: var(--cyan); }
+.gs-top-brand { display: flex; align-items: center; gap: 11px; }
+.gs-logo {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #5fc4ec, #0b3a5c);
+  display: flex; align-items: center; justify-content: center; font-size: 17px; border: 1px solid var(--border-strong);
+}
+.gs-name { font-size: 21px; font-weight: 700; }
+.gs-top-brand small { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.gs-close-btn {
+  width: 36px; height: 36px; border-radius: 9px; border: 1px solid var(--border-strong);
+  background: var(--bg-panel); color: var(--muted); font-size: 18px; cursor: pointer;
+}
+.gs-close-btn:hover { color: var(--text); border-color: var(--cyan); }
+
+.gs-intro-card {
+  margin: 6px 34px 30px; padding: 26px 30px; border-radius: 16px;
+  background: linear-gradient(90deg, rgba(47, 211, 245, 0.08), transparent 60%);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; gap: 22px;
+}
+.gs-intro-icon {
+  width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+  background: var(--cyan-dim); border: 1.5px solid var(--cyan);
+  display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--cyan);
+}
+.gs-intro-card h2 { font-size: 32px; font-weight: 700; }
+.gs-accent { color: var(--cyan); }
+.gs-intro-card p { color: var(--muted); font-size: 14.5px; margin: 6px 0 0; }
+
+.gs-grid-wrap { padding: 10px 34px 40px; position: relative; }
+.gs-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; margin-bottom: 70px; }
+
+.gs-card-cell { position: relative; padding: 0 12px; }
+.gs-card {
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 20px 20px 18px; height: 100%; display: flex; flex-direction: column;
+}
+.gs-card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+.gs-card-num {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg-panel-alt); border: 1.5px solid var(--cyan); color: var(--cyan);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px;
+}
+.gs-card-icon { font-size: 24px; }
+.gs-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 3px; }
+.gs-sub { color: var(--teal-text); font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
+.gs-desc { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 16px; flex: 1; }
+.gs-tip {
+  background: var(--bg-panel-alt); border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 11px; font-size: 12px; color: #b7c8d6; display: flex; gap: 7px; align-items: flex-start; line-height: 1.45;
+}
+
+.gs-h-connector { position: absolute; top: 36px; right: -2px; width: 26px; height: 0; border-top: 2px dotted var(--cyan); z-index: 2; }
+.gs-h-connector::after {
+  content: ''; position: absolute; right: -1px; top: -4px;
+  border-left: 6px solid var(--cyan); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+}
+.gs-row-connector { position: absolute; left: 0; right: 0; bottom: -64px; height: 64px; pointer-events: none; z-index: 1; }
+.gs-ghost { visibility: hidden; pointer-events: none; }
+
+.gs-footer-card {
+  margin: 10px 34px 40px; padding: 22px 28px; border-radius: 16px;
+  background: linear-gradient(90deg, rgba(47, 211, 245, 0.07), rgba(155, 110, 245, 0.07));
+  border: 1px solid var(--border-strong);
+  display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+}
+.gs-footer-left { display: flex; align-items: center; gap: 16px; }
+.gs-footer-logo { width: 44px; height: 44px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #5fc4ec, #0b3a5c); flex-shrink: 0; }
+.gs-footer-left h3 { color: var(--cyan); font-size: 19px; margin-bottom: 4px; }
+.gs-footer-left p { color: var(--muted); font-size: 13px; max-width: 480px; margin: 0; }
+.gs-footer-cta {
+  background: linear-gradient(135deg, var(--cyan), var(--violet)); color: #04121c; border: none;
+  padding: 14px 26px; border-radius: 10px; font-weight: 700; font-size: 14.5px; cursor: pointer; white-space: nowrap;
+  font-family: 'Inter', sans-serif;
+}
+
+@media (max-width: 980px) {
+  .gs-row { grid-template-columns: repeat(2, 1fr); }
+  .gs-h-connector { display: none; }
+}
+@media (max-width: 600px) {
+  .gs-row { grid-template-columns: 1fr; }
+  .gs-card-cell { margin-bottom: 16px; }
+}
