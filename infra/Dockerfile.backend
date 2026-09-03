@@ -42,6 +42,12 @@ EXPOSE 8000
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 ENTRYPOINT ["/usr/local/bin/backend-entrypoint.sh"]
-# --reload-dir /app/backend watches ONLY Python source; NOT /app/data (3GB NetCDFs).
-# --workers is incompatible with --reload, so single-worker hot-reload is used in dev.
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/backend"]
+# Stable by default: NO --reload. On Docker Desktop (Windows/macOS) the bind-mount
+# reload watcher fires on phantom filesystem events and restarts the app mid-request,
+# blanking the UI (empty Data Source / Variable dropdowns until a manual restart).
+# The registry's own polling watcher still hot-loads new YAML manifests without --reload.
+#
+# 2 workers so a worker that dies (e.g. a stray netCDF4/HDF5 C-level fault) is respawned
+# by uvicorn's manager while the other keeps serving — no user-visible outage.
+# Set UVICORN_RELOAD=1 for dev hot-reload (forces a single worker, no supervision).
+CMD ["sh", "-c", "if [ -n \"$UVICORN_RELOAD\" ]; then exec uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/backend; else exec uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --workers \"${UVICORN_WORKERS:-2}\"; fi"]

@@ -85,6 +85,8 @@ async def get_profile(
             + glob.glob(os.path.join(data_dir, "glider", "*.nc"))
             + glob.glob(os.path.join(data_dir, "ctd", "*.nc"))
             + glob.glob(os.path.join(data_dir, "bgc", "*.nc"))
+            + glob.glob(os.path.join(data_dir, "mooring", "*.nc"))
+            + glob.glob(os.path.join(data_dir, "adcp", "*.nc"))
         )
 
         profile = None
@@ -177,8 +179,23 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
     resolution helper in argo_ingest.py's ingest_to_postgis().
     """
     import xarray as xr
-    import numpy as np
+
+    # ALWAYS close the handle. Leaked HDF5/netCDF4 file handles accumulate and,
+    # when Python's GC finalizes one while another request holds the same
+    # process-wide cached handle mid-read, raise a C-level "NetCDF: HDF error"
+    # that crashes the uvicorn worker (→ dropdowns blank until it respawns).
     ds = xr.open_dataset(cache_path)
+    try:
+        return _extract_profile_rows(ds, cache_path, platform_id)
+    finally:
+        try:
+            ds.close()
+        except Exception:
+            pass
+
+
+def _extract_profile_rows(ds, cache_path: str, platform_id: str) -> dict:
+    import numpy as np
 
     def _col(*candidates: str) -> str | None:
         return next((c for c in candidates if c in ds.variables), None)
@@ -190,6 +207,12 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
     col_temp     = _col("temp", "TEMP", "temperature", "TEMPERATURE")
     col_psal     = _col("psal", "PSAL", "salinity", "SALINITY")
     col_chl      = _col("chlorophyll", "CHLA", "chla", "CHLOROPHYLL", "chl_a", "chla_adjusted")
+    col_o2       = _col("oxygen", "DOXY", "doxy", "OXYGEN", "dissolved_oxygen")
+    col_no3      = _col("nitrate", "NITRATE", "no3", "NO3")
+    col_ph       = _col("ph", "PH_IN_SITU_TOTAL", "ph_in_situ_total", "PH")
+    col_cu       = _col("current_u", "u", "U", "eastward_sea_water_velocity", "water_u")
+    col_cv       = _col("current_v", "v", "V", "northward_sea_water_velocity", "water_v")
+    col_cspd     = _col("current_speed", "speed", "SPEED", "sea_water_speed")
     col_lat      = _col("latitude", "LATITUDE")
     col_lon      = _col("longitude", "LONGITUDE")
     col_time     = _col("time", "TIME", "JULD")
@@ -240,6 +263,30 @@ def _load_from_local_cache(cache_path: str, platform_id: str) -> dict:
     if col_chl is not None:
         result["chlorophyll"] = _values(col_chl)
         result["units"]["chlorophyll"] = "mg m-3"
+    if col_o2 is not None:
+        result["oxygen"] = _values(col_o2)
+        result["units"]["oxygen"] = "micromole kg-1"
+    if col_no3 is not None:
+        result["nitrate"] = _values(col_no3)
+        result["units"]["nitrate"] = "micromole kg-1"
+    if col_ph is not None:
+        result["ph"] = _values(col_ph)
+        result["units"]["ph"] = "total scale"
+
+    # ADCP / mooring current profiles — derive speed from u/v if only components are present.
+    if col_cspd is not None or (col_cu is not None and col_cv is not None):
+        u_vals = _values(col_cu)
+        v_vals = _values(col_cv)
+        if col_cspd is not None:
+            spd = _values(col_cspd)
+        else:
+            spd = [float(np.hypot(a, b)) for a, b in zip(u_vals, v_vals)]
+        result["current_speed"] = spd
+        if u_vals:
+            result["current_u"] = u_vals
+        if v_vals:
+            result["current_v"] = v_vals
+        result["units"]["current_speed"] = "m s-1"
     return result
 
 

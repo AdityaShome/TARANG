@@ -1,107 +1,168 @@
 """
-DelimitedTextAdapter — pandas-backed CSV/ASCII ingestion adapter.
+DelimitedTextAdapter — pandas-backed CSV / ASCII ingestion adapter.
 
-Satisfies the "Multi-format ingestion (NetCDF, ASCII)" MVP requirement (§2).
-Converts tabular data to xarray-compatible arrays for the same Layer pipeline.
+Satisfies the PS's "Multi-format ingestion (NetCDF, ASCII)" requirement. The PS
+Background is explicit that text files "span multiple depth levels, spatial
+grids, and time steps", so this adapter reads a long-format table
 
-Expected CSV format:
-  lat,lon,depth,time,<variable>
-  12.5,88.3,0,2026-08-01,0.45
-  ...
+    lat, lon[, depth][, time], <var1>[, <var2> ...]
+
+into a proper gridded xarray Dataset with dims (time?, depth?, lat, lon) — the
+same shape the NetCDF adapter produces, so the whole slice / volume / isosurface
+/ WMS / WCS pipeline works on CSV sources unchanged. Files with no depth/time
+column collapse to a 2-D (lat, lon) grid.
+
+Delimiter is sniffed (comma / tab / whitespace). All value columns are exposed,
+so the frontend variable selector works on a multi-column CSV.
 """
 
 from __future__ import annotations
 
 import logging
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from backend.app.adapters.base import DataSourceAdapter, CFMetadata, SliceResult, VolumeResult
+from backend.app.adapters.base import DataSourceAdapter, SliceResult, VolumeResult
 
 logger = logging.getLogger("tarang.adapters.csv")
 
+_LAT_ALIASES = ("lat", "latitude", "y")
+_LON_ALIASES = ("lon", "longitude", "x")
+_DEPTH_ALIASES = ("depth", "pres", "pressure", "lev", "z")
+_TIME_ALIASES = ("time", "date", "datetime", "timestamp")
+_MISSING = -9999.0
+
 
 class DelimitedTextAdapter(DataSourceAdapter):
-    """
-    Adapter for CSV/ASCII delimited data files.
-    Reads into a pandas DataFrame, pivots into a gridded xarray structure
-    compatible with the rest of the pipeline.
-    """
+    """CSV/ASCII → gridded xarray, with optional depth and time axes."""
 
     def __init__(self, manifest: dict):
         super().__init__(manifest)
-        self._df: pd.DataFrame | None = None
         self._ds: xr.Dataset | None = None
 
-    def open(self, bbox=None) -> xr.Dataset:
-        """Load CSV and pivot to a minimal xarray Dataset."""
+    # ── Load ──────────────────────────────────────────────────────────────────
+    def open(self, bbox=None, mode: str = "live") -> xr.Dataset:
         if self._ds is not None:
             return self._ds
 
         source = self.local_cache or self.source_url
         logger.info(f"Loading delimited text: {source}")
 
-        df = pd.read_csv(source)
+        # sep=None + engine='python' sniffs comma / tab / semicolon / whitespace.
+        df = pd.read_csv(source, sep=None, engine="python")
+        df.columns = [str(c).lower().strip() for c in df.columns]
 
-        # Normalise column names to lowercase
-        df.columns = [c.lower().strip() for c in df.columns]
+        def _resolve(aliases: tuple[str, ...]) -> str | None:
+            return next((a for a in aliases if a in df.columns), None)
 
-        variable = self.variable
-        required = {"lat", "lon", variable}
-        if not required.issubset(set(df.columns)):
-            raise ValueError(
-                f"CSV must have columns: {required}. Found: {list(df.columns)}"
-            )
+        lat_col = _resolve(_LAT_ALIASES)
+        lon_col = _resolve(_LON_ALIASES)
+        if not lat_col or not lon_col:
+            raise ValueError(f"CSV needs latitude & longitude columns. Found: {list(df.columns)}")
+        df = df.rename(columns={lat_col: "lat", lon_col: "lon"})
 
-        # Build a minimal xarray Dataset from the tabular data
-        # Pivot to (lat, lon) grid if depth/time columns not present
-        lats = np.sort(df["lat"].unique())
-        lons = np.sort(df["lon"].unique())
+        depth_col = _resolve(_DEPTH_ALIASES)
+        time_col = _resolve(_TIME_ALIASES)
+        if depth_col and depth_col != "depth":
+            df = df.rename(columns={depth_col: "depth"})
+            depth_col = "depth"
+        if time_col:
+            df = df.rename(columns={time_col: "time"})
+            time_col = "time"
+            df["time"] = pd.to_datetime(df["time"], errors="coerce")
+            df = df.dropna(subset=["time"])
 
-        # Simple 2D surface grid for now
-        grid = df.pivot_table(
-            index="lat", columns="lon", values=variable, aggfunc="mean"
-        ).reindex(index=lats, columns=lons)
+        dims: list[str] = []
+        if time_col:
+            dims.append("time")
+        if depth_col:
+            dims.append("depth")
+        dims += ["lat", "lon"]
 
-        self._ds = xr.Dataset(
-            {variable: xr.DataArray(
-                data=grid.values.astype(np.float32),
-                coords={"lat": lats, "lon": lons},
-                dims=["lat", "lon"],
-                attrs={
-                    "standard_name": self.manifest.get("standard_name", variable),
-                    "long_name":     self.manifest.get("long_name", variable),
-                    "units":         self.manifest.get("units", "unknown"),
-                    "valid_min":     self.manifest.get("valid_min", float(grid.min().min())),
-                    "valid_max":     self.manifest.get("valid_max", float(grid.max().max())),
-                    "_FillValue":    self.manifest.get("missing_value", np.nan),
-                }
-            )}
-        )
+        reserved = {"lat", "lon", "depth", "time"}
+        value_cols = [
+            c for c in df.columns
+            if c not in reserved and pd.api.types.is_numeric_dtype(df[c])
+        ]
+        if not value_cols:
+            raise ValueError(f"CSV has no numeric value column besides {reserved & set(df.columns)}")
+
+        # Long table → gridded cube. mean() collapses duplicate (dim-combo) rows;
+        # to_xarray() fills absent combinations with NaN.
+        gridded = df.groupby(dims, sort=True)[value_cols].mean().to_xarray()
+
+        # Attach CF attrs — manifest values for the manifest's primary variable,
+        # sensible generics for the rest.
+        for v in value_cols:
+            if v == self.variable:
+                gridded[v].attrs.update({
+                    "standard_name": self.manifest.get("standard_name", v),
+                    "long_name": self.manifest.get("long_name", v),
+                    "units": self.manifest.get("units", "unknown"),
+                })
+            else:
+                gridded[v].attrs.setdefault("standard_name", v)
+                gridded[v].attrs.setdefault("long_name", v)
+                gridded[v].attrs.setdefault("units", "unknown")
+            finite = gridded[v].values[np.isfinite(gridded[v].values)]
+            gridded[v].attrs.setdefault("valid_min", float(finite.min()) if finite.size else 0.0)
+            gridded[v].attrs.setdefault("valid_max", float(finite.max()) if finite.size else 1.0)
+            gridded[v].attrs["_FillValue"] = _MISSING
+
+        self._ds = gridded
         return self._ds
 
+    # ── Metadata ──────────────────────────────────────────────────────────────
     def get_metadata(self) -> dict:
         ds = self.open()
-        variable = self.variable
+        cf_meta = {}
+        for v in ds.data_vars:
+            a = ds[v].attrs
+            cf_meta[v] = {
+                "standard_name": a.get("standard_name", v),
+                "long_name": a.get("long_name", v),
+                "units": a.get("units", "unknown"),
+                "valid_min": float(a.get("valid_min", -9999)),
+                "valid_max": float(a.get("valid_max", 9999)),
+                "missing_value": _MISSING,
+            }
+
+        if "depth" in ds.coords:
+            depth_levels = [float(d) for d in ds["depth"].values]
+        else:
+            depth_levels = self.manifest.get("depth_levels") or [0]
+
+        time_range = {}
+        if "time" in ds.coords:
+            times = ds["time"].values
+            time_range = {"start": str(times[0]), "end": str(times[-1]), "steps": int(len(times))}
+
         return {
-            "source_id":           self.manifest["id"],
-            "label":               self.manifest.get("label", self.manifest["id"]),
-            "available_variables": [variable],
-            "cf_metadata": {
-                variable: {
-                    "standard_name": self.manifest.get("standard_name", variable),
-                    "long_name":     self.manifest.get("long_name", variable),
-                    "units":         self.manifest.get("units", "unknown"),
-                    "valid_min":     float(ds[variable].attrs.get("valid_min", -9999)),
-                    "valid_max":     float(ds[variable].attrs.get("valid_max",  9999)),
-                    "missing_value": float(ds[variable].attrs.get("_FillValue", np.nan)),
-                }
-            },
-            "depth_levels": self.manifest.get("depth_levels") or [0],
-            "time_range":   {},
-            "dimensions":   {k: int(v) for k, v in ds.sizes.items()},
+            "source_id": self.manifest["id"],
+            "label": self.manifest.get("label", self.manifest["id"]),
+            "available_variables": list(ds.data_vars),
+            "cf_metadata": cf_meta,
+            "depth_levels": depth_levels,
+            "time_range": time_range,
+            "dimensions": {k: int(v) for k, v in ds.sizes.items()},
         }
+
+    # ── Internal: (var) → 2-D lat×lon DataArray at a depth / time ─────────────
+    def _select_2d(self, ds: xr.Dataset, variable: str, depth_m: float, time_idx: int):
+        da = ds[variable]
+        time_str = "static"
+        if "time" in da.dims:
+            n = da.sizes["time"]
+            ti = max(0, min(int(time_idx), n - 1))
+            time_str = str(ds["time"].values[ti])
+            da = da.isel(time=ti)
+        actual_depth = 0.0
+        if "depth" in da.dims:
+            da = da.sel(depth=depth_m, method="nearest")
+            actual_depth = float(da["depth"].values)
+        return da, actual_depth, time_str
 
     def get_slice(
         self,
@@ -109,30 +170,30 @@ class DelimitedTextAdapter(DataSourceAdapter):
         depth_m: float,
         time_idx: int,
         bbox: tuple[float, float, float, float],
+        mode: str = "live",
     ) -> SliceResult:
         ds = self.open()
         min_lon, min_lat, max_lon, max_lat = bbox
+        if variable not in ds.data_vars:
+            variable = self.variable if self.variable in ds.data_vars else list(ds.data_vars)[0]
 
-        subset = ds[variable].sel(
-            lat=slice(min_lat, max_lat),
-            lon=slice(min_lon, max_lon),
-        )
-        arr = subset.values.astype(np.float32)
+        da, actual_depth, time_str = self._select_2d(ds, variable, depth_m, time_idx)
+        da = da.sel(lat=slice(min_lat, max_lat), lon=slice(min_lon, max_lon))
 
-        meta = self._extract_cf_meta(ds, variable, [0])
+        arr = np.nan_to_num(da.values.astype(np.float32), nan=_MISSING)
+        meta = self._extract_cf_meta(ds, variable, [actual_depth])
         meta.bounds = {
-            "lat":   [float(min_lat), float(max_lat)],
-            "lon":   [float(min_lon), float(max_lon)],
-            "depth": [0.0],
+            "lat": [float(min_lat), float(max_lat)],
+            "lon": [float(min_lon), float(max_lon)],
+            "depth": [float(actual_depth)],
         }
-
         return SliceResult(
             data=arr,
             meta=meta,
-            lat=subset.coords["lat"].values.astype(np.float32),
-            lon=subset.coords["lon"].values.astype(np.float32),
-            depth_m=0.0,
-            time_str="static",
+            lat=da.coords["lat"].values.astype(np.float32),
+            lon=da.coords["lon"].values.astype(np.float32),
+            depth_m=actual_depth,
+            time_str=time_str,
         )
 
     def get_volume(
@@ -140,15 +201,57 @@ class DelimitedTextAdapter(DataSourceAdapter):
         variable: str,
         time_idx: int,
         bbox: tuple[float, float, float, float],
+        mode: str = "live",
     ) -> VolumeResult:
-        # CSV data is 2D surface-only; wrap in a degenerate depth dimension
-        slice_result = self.get_slice(variable, 0, time_idx, bbox)
-        volume_data = slice_result.data[np.newaxis, :, :]  # (1, lat, lon)
+        ds = self.open()
+        min_lon, min_lat, max_lon, max_lat = bbox
+        if variable not in ds.data_vars:
+            variable = self.variable if self.variable in ds.data_vars else list(ds.data_vars)[0]
 
+        da = ds[variable]
+        time_str = "static"
+        if "time" in da.dims:
+            n = da.sizes["time"]
+            ti = max(0, min(int(time_idx), n - 1))
+            time_str = str(ds["time"].values[ti])
+            da = da.isel(time=ti)
+        da = da.sel(lat=slice(min_lat, max_lat), lon=slice(min_lon, max_lon))
+
+        if "depth" in da.dims:
+            da = da.transpose("depth", "lat", "lon")
+            arr = da.values.astype(np.float32)
+        else:
+            arr = da.values.astype(np.float32)[np.newaxis, :, :]  # degenerate depth
+
+        arr = np.nan_to_num(arr, nan=_MISSING)
+        meta = self._extract_cf_meta(ds, variable, self.get_metadata()["depth_levels"])
+        meta.bounds = {
+            "lat": [float(min_lat), float(max_lat)],
+            "lon": [float(min_lon), float(max_lon)],
+            "depth": [float(self.get_metadata()["depth_levels"][0]),
+                      float(self.get_metadata()["depth_levels"][-1])],
+        }
         return VolumeResult(
-            data=volume_data,
-            meta=slice_result.meta,
-            lat=slice_result.lat,
-            lon=slice_result.lon,
-            time_str=slice_result.time_str,
+            data=arr,
+            meta=meta,
+            lat=da.coords["lat"].values.astype(np.float32),
+            lon=da.coords["lon"].values.astype(np.float32),
+            time_str=time_str,
         )
+
+    def get_profile_at(
+        self, variable: str, lat: float, lon: float, time_idx: int = 0
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Nearest-cell vertical profile — used for model-vs-observation deltas."""
+        ds = self.open()
+        if variable not in ds.data_vars:
+            variable = self.variable if self.variable in ds.data_vars else list(ds.data_vars)[0]
+        da = ds[variable]
+        if "time" in da.dims:
+            n = da.sizes["time"]
+            da = da.isel(time=max(0, min(int(time_idx), n - 1)))
+        da = da.sel(lat=lat, lon=lon, method="nearest")
+        depths = (np.asarray(ds["depth"].values, dtype=np.float32)
+                  if "depth" in ds.coords else np.array([0.0], dtype=np.float32))
+        vals = np.nan_to_num(np.atleast_1d(da.values).astype(np.float32), nan=_MISSING)
+        return depths, vals

@@ -37,7 +37,7 @@ from fastapi.responses import JSONResponse
 from backend.app.registry.loader import RegistryLoader
 from backend.app.cache import RedisCache
 from backend.app.db import Database
-from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile, eddy, delta, metrics, preview, registry as registry_endpoint, copilot
+from backend.app.endpoints import metadata, slice_, volume, isosurface, instruments, profile, eddy, delta, metrics, preview, registry as registry_endpoint, copilot, ogc, upload, derived
 logger = logging.getLogger("tarang")
 
 logging.basicConfig(
@@ -90,7 +90,16 @@ async def lifespan(app: FastAPI):
 
     _registry = RegistryLoader(registry_dir)
 
-    _registry.load_all()
+    # Retry the cold-start load a few times — on a freshly-started Docker Desktop
+    # bind mount the directory can be visible before its files are, which would
+    # otherwise boot the API with an empty registry (all dropdowns blank).
+    import time as _time
+    for _attempt in range(5):
+        _registry.load_all()
+        if list(_registry.manifest_ids()):
+            break
+        logger.warning("Registry empty on startup attempt %d — retrying in 1s...", _attempt + 1)
+        _time.sleep(1)
 
     logger.info(
         "Registry loaded: %s plugins",
@@ -375,6 +384,21 @@ app.include_router(
 
 app.include_router(
     preview.router,
+    prefix="/api"
+)
+
+app.include_router(
+    ogc.router,
+    prefix="/api"
+)
+
+app.include_router(
+    upload.router,
+    prefix="/api"
+)
+
+app.include_router(
+    derived.router,
     prefix="/api"
 )
 

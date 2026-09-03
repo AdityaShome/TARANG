@@ -101,6 +101,7 @@ export const VIEW_SCOPE_PRESETS = {
 
 const DEFAULT_COLORMAP: ColormapConfig = {
   name:                 'viridis',
+  reversed:             false,
   min:                  0,
   max:                  35,
   logScale:             false,
@@ -265,6 +266,8 @@ export const useTarangStore = create<TarangState>()(
       eddy:       false,
       fronts:     false,
       delta:      false,
+      waterMasses: false,
+      flow:       false,
     },
 
     // ── Actions ───────────────────────────────────────────────────────────────

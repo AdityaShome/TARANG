@@ -25,6 +25,7 @@ services:
       dockerfile: Dockerfile
     image: tarang-thredds:5.9
     container_name: tarang_thredds
+    restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
@@ -33,7 +34,9 @@ services:
       - ./thredds/catalog.xml:/usr/local/tomcat/content/thredds/catalog.xml:ro
       - ./thredds/threddsConfig.xml:/usr/local/tomcat/content/thredds/threddsConfig.xml:ro
     environment:
-      - JAVA_OPTS=-Xmx2g -Xms512m
+      # 1g is plenty for the handful of small demo NetCDFs and leaves headroom on a
+      # Docker Desktop VM so the backend isn't OOM-killed while opening Copernicus files.
+      - JAVA_OPTS=-Xmx1g -Xms256m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/thredds/catalog.html"]
       interval: 30s
@@ -50,14 +53,16 @@ services:
       dockerfile: infra/Dockerfile.backend
     image: tarang-backend:latest
     container_name: tarang_backend
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
       # Mount data dir for local NetCDF cache
       - ./data:/app/data
-      # Mount registry so hot-reload of YAML manifests works without rebuild
+      # Mount registry so the polling watcher hot-loads new YAML manifests without a rebuild
       - ./registry:/app/registry:ro
-      # Dev: mount source for live reload (remove in prod)
+      # Source mount: code edits apply on `docker compose restart backend`. NOT auto-reloaded
+      # by default — set UVICORN_RELOAD=1 below for dev hot-reload (unstable on Docker Desktop).
       - ./backend:/app/backend
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql://tarang:tarang_secret@postgis:5432/tarang}
@@ -70,6 +75,7 @@ services:
       - COPERNICUS_PASSWORD=${COPERNICUS_PASSWORD:-}
       - OFFLINE_MODE=${OFFLINE_MODE:-false}   # true → no outbound calls; serve data/ caches only
       - OPTION_B_MODE=${OPTION_B_MODE:-false} # true → also mount the hand-rolled /wms + /wcs
+      - UVICORN_RELOAD=${UVICORN_RELOAD:-}    # set to 1 for dev hot-reload (restarts app on file changes; flaky on Docker Desktop)
     depends_on:
       postgis:
         condition: service_healthy
@@ -82,6 +88,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+      # Entrypoint seeds Argo/glider/mooring data into PostGIS before uvicorn starts —
+      # don't let the healthcheck fail the container during that window.
+      start_period: 120s
     networks:
       - tarang_net
 
@@ -89,6 +98,7 @@ services:
   postgis:
     image: postgis/postgis:16-3.4-alpine
     container_name: tarang_postgis
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-tarang}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tarang_secret}
@@ -108,6 +118,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: tarang_redis
+    restart: unless-stopped
     command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
@@ -123,6 +134,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: tarang_nginx
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:
@@ -143,6 +155,7 @@ services:
       target: dev
     image: tarang-frontend:latest
     container_name: tarang_frontend
+    restart: unless-stopped
     ports:
       - "5173:5173"
     volumes:

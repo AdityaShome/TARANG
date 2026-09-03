@@ -7,12 +7,7 @@ import { getOrFetchPreview, peekPreview, cropPreview } from './previewCache'
 
 import vertShader from '../shaders/depthSliceVert.glsl?raw'
 import fragShader from '../shaders/colormapFrag.glsl?raw'
-import type { ColormapName } from '../../api/types'
-
-// Must match the u_colormap branches in colormapFrag.glsl exactly.
-const COLORMAP_INDEX: Record<ColormapName, number> = {
-  viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
-}
+import { buildColormapLUT } from '../colormaps'
 
 export class DepthSliceLayer implements Layer {
   private mesh: THREE.Mesh | null = null
@@ -53,6 +48,7 @@ export class DepthSliceLayer implements Layer {
         u_bounds: { value: new THREE.Vector4(-180, 180, -90, 90) },
         u_colormap: { value: 0 },
         u_log_scale: { value: 0 },
+        u_cmap: { value: buildColormapLUT('viridis', false) },
       },
       transparent: true,
       side: THREE.DoubleSide,
@@ -101,7 +97,7 @@ export class DepthSliceLayer implements Layer {
     this.material.uniforms.u_clim.value.set(dataMin, dataMax)
     useTarangStore.getState().setColormap({ min: dataMin, max: dataMax })
     this.material.uniforms.u_missing.value = missing ?? -9999.0
-    this.material.uniforms.u_colormap.value = COLORMAP_INDEX[state.colormap.name] ?? 0
+    this.material.uniforms.u_cmap.value = buildColormapLUT(state.colormap.name, state.colormap.reversed)
     this.material.uniforms.u_log_scale.value = state.colormap.logScale ? 1 : 0
 
     // Pass bounds to vertex shader to warp onto sphere (1 scene unit = 1 degree)

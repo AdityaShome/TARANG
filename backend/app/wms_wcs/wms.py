@@ -16,6 +16,7 @@ WHY THIS EXISTS (§3 Option B):
 OPERATIONS IMPLEMENTED:
   GetCapabilities  → returns XML capabilities document
   GetMap           → returns colourised PNG tile for a given BBOX/CRS/layer
+  GetFeatureInfo   → returns the data value at a clicked pixel (text/plain, HTML, JSON)
 
 SPEC REFERENCE:
   OGC WMS 1.3.0: https://www.ogc.org/standards/wms
@@ -75,6 +76,14 @@ _CAPABILITIES_XML = """\
           <OnlineResource xlink:type="simple" xlink:href="{base_url}/wms"/>
         </Get></HTTP></DCPType>
       </GetMap>
+      <GetFeatureInfo>
+        <Format>text/plain</Format>
+        <Format>text/html</Format>
+        <Format>application/json</Format>
+        <DCPType><HTTP><Get>
+          <OnlineResource xlink:type="simple" xlink:href="{base_url}/wms"/>
+        </Get></HTTP></DCPType>
+      </GetFeatureInfo>
     </Request>
     <Exception>
       <Format>XML</Format>
@@ -96,7 +105,7 @@ _CAPABILITIES_XML = """\
 """
 
 _LAYER_XML_TEMPLATE = """\
-      <Layer queryable="0" opaque="0" cascaded="0">
+      <Layer queryable="1" opaque="0" cascaded="0">
         <Name>{layer_id}</Name>
         <Title>{label}</Title>
         <Abstract>{description} [CF standard_name: {standard_name}; units: {units}]</Abstract>
@@ -175,6 +184,10 @@ async def wms(
     ELEVATION: Optional[float] = Query(None, description="Depth level in metres (positive-down)"),
     TIME: Optional[str] = Query(None, description="ISO-8601 time step"),
     COLORMAP: Optional[str] = Query(None, description="matplotlib colormap name override"),
+    QUERY_LAYERS: Optional[str] = Query(None, description="GetFeatureInfo: layer(s) to query"),
+    INFO_FORMAT: Optional[str] = Query("text/plain", description="GetFeatureInfo response format"),
+    I: Optional[int] = Query(None, description="GetFeatureInfo: pixel column (from left)"),
+    J: Optional[int] = Query(None, description="GetFeatureInfo: pixel row (from top)"),
 ):
     """
     OGC WMS 1.3.0 endpoint.
@@ -197,13 +210,48 @@ async def wms(
             request, LAYERS, CRS or "CRS:84", BBOX,
             WIDTH or 256, HEIGHT or 256, ELEVATION, TIME, COLORMAP,
         )
+    elif req_upper == "GETFEATUREINFO":
+        query_layer = QUERY_LAYERS or LAYERS
+        if not query_layer:
+            _wms_error(400, "QUERY_LAYERS parameter is required for GetFeatureInfo")
+        if not BBOX:
+            _wms_error(400, "BBOX parameter is required for GetFeatureInfo")
+        if I is None or J is None:
+            _wms_error(400, "I and J pixel parameters are required for GetFeatureInfo")
+        return await _get_feature_info(
+            request, query_layer.split(",")[0], BBOX, CRS or "CRS:84",
+            WIDTH or 256, HEIGHT or 256, I, J, ELEVATION, INFO_FORMAT or "text/plain",
+        )
     else:
-        raise HTTPException(400, f"Unsupported WMS REQUEST: '{REQUEST}'. Supported: GetCapabilities, GetMap")
+        raise HTTPException(400, f"Unsupported WMS REQUEST: '{REQUEST}'. Supported: GetCapabilities, GetMap, GetFeatureInfo")
 
 
 def _xml_escape(s: str) -> str:
     return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;"))
+
+
+def _crs_is_latlon(crs: str | None) -> bool:
+    """
+    WMS 1.3.0 axis order: EPSG:4326 is (lat, lon); CRS:84 is (lon, lat). QGIS and
+    other spec-correct clients send EPSG:4326 BBOX as minLat,minLon,maxLat,maxLon.
+    """
+    if not crs:
+        return False
+    c = crs.strip().upper().replace("URN:OGC:DEF:CRS:", "").replace("EPSG::", "EPSG:")
+    return c in ("EPSG:4326", "4326")
+
+
+def _parse_wms_bbox(bbox_str: str, crs: str | None) -> tuple[float, float, float, float]:
+    """Return (min_lon, min_lat, max_lon, max_lat) regardless of the CRS axis convention."""
+    parts = [float(x) for x in bbox_str.split(",")]
+    if len(parts) != 4:
+        raise ValueError(f"Invalid BBOX '{bbox_str}'. Expected four comma-separated numbers.")
+    if _crs_is_latlon(crs):
+        min_lat, min_lon, max_lat, max_lon = parts
+    else:
+        min_lon, min_lat, max_lon, max_lat = parts
+    return (min_lon, min_lat, max_lon, max_lat)
 
 
 async def _get_capabilities(request: Request) -> Response:
@@ -262,12 +310,11 @@ async def _get_map(
     except KeyError:
         _wms_error(404, f"Layer '{layer_id}' not found. Available: {list(registry.manifest_ids())}")
 
-    # Parse BBOX: WMS 1.3.0 CRS:84 / EPSG:4326 order is (minLon, minLat, maxLon, maxLat)
+    # Parse BBOX honouring WMS 1.3.0 axis order (EPSG:4326 = lat,lon; CRS:84 = lon,lat)
     try:
-        parts = [float(x) for x in bbox_str.split(",")]
-        min_lon, min_lat, max_lon, max_lat = parts
+        min_lon, min_lat, max_lon, max_lat = _parse_wms_bbox(bbox_str, crs)
     except (ValueError, TypeError):
-        _wms_error(400, f"Invalid BBOX '{bbox_str}'. Expected: minLon,minLat,maxLon,maxLat")
+        _wms_error(400, f"Invalid BBOX '{bbox_str}' for CRS '{crs}'")
 
     # Clamp output size
     width  = min(max(width,  1), 2048)
@@ -305,6 +352,104 @@ async def _get_map(
     png  = _build_png(rgba, width, height)
 
     return Response(content=png, media_type="image/png")
+
+
+async def _get_feature_info(
+    request: Request,
+    layer_id: str,
+    bbox_str: str,
+    crs: str,
+    width: int,
+    height: int,
+    i: int,
+    j: int,
+    elevation: Optional[float],
+    info_format: str,
+) -> Response:
+    """
+    WMS 1.3.0 GetFeatureInfo — return the data value under the clicked pixel.
+
+    The client sends the same BBOX/WIDTH/HEIGHT as its GetMap plus the pixel
+    (I, J) it clicked (I from the left, J from the top). We convert that to a
+    lon/lat, pull the depth-slice for the BBOX, and report the nearest cell.
+    """
+    registry = request.app.state.registry
+
+    try:
+        adapter = registry.get_adapter(layer_id)
+        manifest = registry.get_manifest(layer_id)
+    except KeyError:
+        _wms_error(404, f"Layer '{layer_id}' not found. Available: {list(registry.manifest_ids())}")
+
+    try:
+        min_lon, min_lat, max_lon, max_lat = _parse_wms_bbox(bbox_str, crs)
+    except (ValueError, TypeError):
+        _wms_error(400, f"Invalid BBOX '{bbox_str}' for CRS '{crs}'")
+
+    if not (0 <= i < width and 0 <= j < height):
+        _wms_error(400, f"Pixel (I={i}, J={j}) is outside the {width}x{height} map")
+
+    # Pixel centre → geographic coordinate. J runs top→down, so latitude descends.
+    lon = min_lon + (i + 0.5) / width * (max_lon - min_lon)
+    lat = max_lat - (j + 0.5) / height * (max_lat - min_lat)
+
+    try:
+        meta = adapter.get_metadata()
+        depth_levels = meta.get("depth_levels") or [0]
+        depth_m = elevation if elevation is not None else depth_levels[0]
+        variable = meta["available_variables"][0]
+        sr = adapter.get_slice(variable, depth_m, 0, (min_lon, min_lat, max_lon, max_lat))
+    except Exception as e:
+        logger.warning(f"WMS GetFeatureInfo: get_slice failed for '{layer_id}': {e}")
+        _wms_error(500, f"Could not read data for layer '{layer_id}'")
+
+    iy = int(np.argmin(np.abs(sr.lat - lat)))
+    ix = int(np.argmin(np.abs(sr.lon - lon)))
+    raw = sr.data[iy, ix]
+    value = None if (raw is None or not np.isfinite(raw)) else round(float(raw), 4)
+
+    units = manifest.get("units", "unknown")
+    std_name = manifest.get("standard_name", variable)
+    fmt = info_format.lower()
+
+    if "json" in fmt:
+        import json
+        body = json.dumps({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [round(float(sr.lon[ix]), 4), round(float(sr.lat[iy]), 4)]},
+                "properties": {
+                    "layer": layer_id, "variable": variable, "standard_name": std_name,
+                    "value": value, "units": units, "elevation_m": depth_m,
+                },
+            }],
+        })
+        return Response(content=body, media_type="application/json")
+
+    if "html" in fmt:
+        vtxt = "no data" if value is None else f"{value} {units}"
+        body = (
+            "<html><body><table border='1'>"
+            f"<tr><th>Layer</th><td>{_xml_escape(layer_id)}</td></tr>"
+            f"<tr><th>Variable</th><td>{_xml_escape(std_name)}</td></tr>"
+            f"<tr><th>Value</th><td>{_xml_escape(vtxt)}</td></tr>"
+            f"<tr><th>Lon, Lat</th><td>{round(float(sr.lon[ix]), 4)}, {round(float(sr.lat[iy]), 4)}</td></tr>"
+            f"<tr><th>Elevation</th><td>{depth_m} m</td></tr>"
+            "</table></body></html>"
+        )
+        return Response(content=body, media_type="text/html")
+
+    # default: text/plain
+    vtxt = "no data" if value is None else f"{value} {units}"
+    body = (
+        f"Layer: {layer_id}\n"
+        f"Variable: {std_name} ({variable})\n"
+        f"Value: {vtxt}\n"
+        f"Location: lon={round(float(sr.lon[ix]), 4)}, lat={round(float(sr.lat[iy]), 4)}\n"
+        f"Elevation: {depth_m} m\n"
+    )
+    return Response(content=body, media_type="text/plain")
 
 
 def _wms_error(code: int, message: str):

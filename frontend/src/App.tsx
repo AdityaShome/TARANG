@@ -41,9 +41,15 @@ export default function App() {
     async function bootstrap() {
       setLoading(true)
       try {
-        // 1. Load source list
+        // 1. Load source list. A transient empty response (backend mid-reload,
+        //    cold-start bind-mount race) must NOT clobber a good list — keep what
+        //    we have and let the healer poll below recover it.
         const sources = await fetchSources(controller.signal)
-        setSources(sources)
+        if (sources.length > 0) {
+          setSources(sources)
+        } else if (useTarangStore.getState().sources.length === 0) {
+          throw new Error('backend returned no data sources (starting up?)')
+        }
 
         // 2. Load metadata for the active source (drives selectors)
         const meta = await fetchMetadata(activeSourceId, controller.signal)
@@ -76,6 +82,45 @@ export default function App() {
     bootstrap()
     return () => controller.abort()
   }, [activeSourceId])  // re-run when source changes
+
+  // ── Self-healer: the UI must never sit broken. Every 4 s, if the source list
+  //    is empty OR the active source isn't in the list (backend restarted /
+  //    registry reloaded a different set), re-fetch and re-bootstrap. Also runs
+  //    on tab-focus. Idle no-op in the healthy case.
+  useEffect(() => {
+    let running = false
+    async function heal() {
+      if (running) return
+      const st = useTarangStore.getState()
+      const stale = st.sources.length === 0 || !st.sources.some(s => s.id === st.activeSourceId)
+      if (!stale) return
+      running = true
+      try {
+        const sources = await fetchSources()
+        if (sources.length > 0) {
+          setSources(sources)
+          // Snap to a valid source if the current one vanished.
+          const sourceId = sources.some(s => s.id === useTarangStore.getState().activeSourceId)
+            ? useTarangStore.getState().activeSourceId
+            : sources[0].id
+          if (sourceId !== useTarangStore.getState().activeSourceId) {
+            useTarangStore.getState().setActiveSource(sourceId)
+          }
+          const meta = await fetchMetadata(sourceId)
+          setDepthLevels(meta.depth_levels)
+          setTimeSteps(buildTimeStepLabels(meta.time_range?.start, meta.time_range?.end, meta.time_range?.steps))
+          setVariableMeta(meta.available_variables, meta.cf_metadata)
+          if (meta.available_variables[0]) setActiveVar(meta.available_variables[0])
+          setError(null)
+        }
+      } catch { /* still down — next tick */ }
+      finally { running = false }
+    }
+    const id = setInterval(heal, 4000)
+    window.addEventListener('focus', heal)
+    heal()
+    return () => { clearInterval(id); window.removeEventListener('focus', heal) }
+  }, [])
 
   return (
     <div id="tarang-root" style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>

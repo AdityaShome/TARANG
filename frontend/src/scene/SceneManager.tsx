@@ -32,6 +32,8 @@ import { VectorLayer } from './layers/VectorLayer'
 import { EddyOverlayLayer } from './layers/EddyOverlayLayer'
 import { FrontOverlayLayer } from './layers/FrontOverlayLayer'
 import { DeltaOverlayLayer } from './layers/DeltaOverlayLayer'
+import { WaterMassOverlayLayer } from './layers/WaterMassOverlayLayer'
+import { FlowLineLayer } from './layers/FlowLineLayer'
 import { OceanCubeLayer } from './layers/OceanCubeLayer'
 import { clampRegionSpan, REGION_MAX_PICK_SPAN_DEG } from '../api/geocode'
 
@@ -326,6 +328,8 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     layerManager.addLayer('eddy',       new EddyOverlayLayer())
     layerManager.addLayer('fronts',     new FrontOverlayLayer())
     layerManager.addLayer('delta',      new DeltaOverlayLayer())
+    layerManager.addLayer('waterMasses', new WaterMassOverlayLayer())
+    layerManager.addLayer('flow',       new FlowLineLayer())
     layerManager.addLayer('cube',       new OceanCubeLayer())
 
     // (A hardcoded "Bay of Bengal region highlight ring" used to live here, always drawn
@@ -348,6 +352,10 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
       // Animate eddy rings in OceanCubeLayer every frame
       const cubeLayer = layerManagerRef.current?.getLayer('cube') as OceanCubeLayer | undefined
       if (cubeLayer) cubeLayer.animate(Math.min(dt, 0.1))   // clamp dt to avoid spin jump on tab refocus
+
+      // Scroll the flow-line pulse
+      const flowLayer = layerManagerRef.current?.getLayer('flow') as FlowLineLayer | undefined
+      flowLayer?.animate(elapsed)
 
       controlsRef.current?.update()
 
@@ -572,7 +580,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     // update() calls below. Without this, whichever layer last successfully fetched data stays
     // visible forever: switching render mode or unchecking a Layers checkbox only stopped that
     // layer from being *updated*, never hid what it had already rendered.
-    const ALL_LAYER_IDS = ['slice', 'volume', 'isosurface', 'cube', 'markers', 'vectors', 'eddy', 'fronts', 'delta'] as const
+    const ALL_LAYER_IDS = ['slice', 'volume', 'isosurface', 'cube', 'markers', 'vectors', 'eddy', 'fronts', 'delta', 'waterMasses', 'flow'] as const
     const activeLayerIds = new Set<string>()
 
     // store.setActiveSource() clears activeVar synchronously so it can never name a variable
@@ -595,6 +603,8 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     if (layerVisibility['eddy'])     activeLayerIds.add('eddy')
     if (layerVisibility['fronts'])   activeLayerIds.add('fronts')
     if (layerVisibility['delta'])    activeLayerIds.add('delta')
+    if (layerVisibility['waterMasses']) activeLayerIds.add('waterMasses')
+    if (layerVisibility['flow'])     activeLayerIds.add('flow')
 
     for (const id of ALL_LAYER_IDS) {
       layerManager.getLayer(id)?.setVisible(activeLayerIds.has(id))
@@ -660,6 +670,16 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     if (activeLayerIds.has('delta')) {
       const layer = layerManager.getLayer('delta')
       if (layer) pending.push(layer.update({ source: activeSourceId, bbox, timeIdx: activeTimeIdx }))
+    }
+
+    if (activeLayerIds.has('waterMasses')) {
+      const layer = layerManager.getLayer('waterMasses')
+      if (layer) pending.push(layer.update({ source: activeSourceId, bbox, timeIdx: activeTimeIdx, depthIdx: activeDepthIdx }))
+    }
+
+    if (activeLayerIds.has('flow')) {
+      const layer = layerManager.getLayer('flow')
+      if (layer) pending.push(layer.update({ bbox, timeIdx: activeTimeIdx, depthIdx: activeDepthIdx }))
     }
 
     if (activeLayerIds.has('cube')) {

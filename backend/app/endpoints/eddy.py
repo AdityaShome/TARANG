@@ -64,7 +64,8 @@ async def get_eddy(
         # adapter.open() locks _NETCDF_IO_LOCK internally for the file open (and the lock is NOT
         # reentrant) - so open OUTSIDE the lock, then take it only for the subset + .values read.
         ds = adapter.open(bbox_tuple)
-        with _NETCDF_IO_LOCK:
+        try:
+          with _NETCDF_IO_LOCK:
             lat_dim = "latitude" if "latitude" in ds.dims else "lat"
             lon_dim = "longitude" if "longitude" in ds.dims else "lon"
 
@@ -91,6 +92,11 @@ async def get_eddy(
 
             lats = subset[lat_dim].values.astype(np.float64)
             lons = subset[lon_dim].values.astype(np.float64)
+        finally:
+            try:
+                ds.close()
+            except Exception:
+                pass
 
         if lats.size < 3 or lons.size < 3:
             return []   # this source doesn't cover the requested bbox — no eddies, not an error
@@ -202,7 +208,8 @@ async def get_front(
         # adapter.open() locks _NETCDF_IO_LOCK internally for the file open (and the lock is NOT
         # reentrant) - so open OUTSIDE the lock, then take it only for the subset + .values read.
         ds = adapter.open(bbox_tuple)
-        with _NETCDF_IO_LOCK:
+        try:
+          with _NETCDF_IO_LOCK:
             lat_dim = "latitude" if "latitude" in ds.dims else "lat"
             lon_dim = "longitude" if "longitude" in ds.dims else "lon"
 
@@ -225,6 +232,11 @@ async def get_front(
 
             lats = subset[lat_dim].values.astype(np.float64)
             lons = subset[lon_dim].values.astype(np.float64)
+        finally:
+            try:
+                ds.close()
+            except Exception:
+                pass
 
         if lats.size < 3 or lons.size < 3:
             return []

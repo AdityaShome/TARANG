@@ -8,8 +8,9 @@ uniform mat4 u_worldToUnit;   // world → [0,1]^3 box space, ordered (lon, lat,
 uniform vec2 u_clim;
 uniform float u_opacity;
 uniform float u_missing;
-uniform float u_colormap;     // 0=viridis 1=plasma 2=magma 3=inferno 4=jet
+uniform float u_colormap;     // legacy, unused — palette now comes from u_cmap
 uniform float u_log_scale;    // 0=linear 1=log
+uniform sampler2D u_cmap;     // 256×1 palette LUT — see scene/colormaps.ts
 uniform float u_lat_flip;     // 1 → data rows run north→south, mirror the lat axis
 
 layout(location = 0) out highp vec4 pc_fragColor;
@@ -36,12 +37,8 @@ vec3 jetMap(float t) {
         clamp(min(1.5 - abs(2.0*t - 0.5), 1.0), 0.0, 1.0));
 }
 vec3 safeColormap(float t) {
-    // else-if chain (not independent returns) — see the identical note in colormapFrag.glsl.
-    if (u_colormap < 0.5)      return viridis(t);
-    else if (u_colormap < 1.5) return plasma(t);
-    else if (u_colormap < 2.5) return magma(t);
-    else if (u_colormap < 3.5) return inferno(t);
-    else                       return jetMap(t);
+    // Palette LUT (scene/colormaps.ts) — choice + reverse baked in on the JS side.
+    return texture(u_cmap, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
 }
 float normalize_val(float val) {
     if (u_log_scale > 0.5) {

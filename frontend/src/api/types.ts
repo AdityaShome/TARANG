@@ -117,11 +117,21 @@ export interface DepthProfile {
   model_salinity?: number[] | null
   delta_salinity?: number[] | null
   chlorophyll?: number[] | null     // BGC floats only
+  oxygen?: number[] | null          // BGC floats
+  nitrate?: number[] | null
+  ph?: number[] | null
+  current_speed?: number[] | null   // ADCP / mooring current profiles
+  current_u?: number[] | null
+  current_v?: number[] | null
   units: {
     depth:       string
     temperature: string
     salinity:    string
     chlorophyll?: string
+    oxygen?: string
+    nitrate?: string
+    ph?: string
+    current_speed?: string
   }
 }
 
@@ -177,10 +187,17 @@ export interface SourceEntry {
 }
 
 // ── Colourmap config ──────────────────────────────────────────────────────────
-export type ColormapName = 'viridis' | 'plasma' | 'magma' | 'inferno' | 'jet'
+// Palette stops live in scene/colormaps.ts (PALETTES) — the single source of truth
+// for the shader LUT textures and the 2D renderers. Keep this union in sync with
+// that object's keys.
+export type ColormapName =
+  | 'viridis' | 'plasma' | 'magma' | 'inferno'
+  | 'thermal' | 'haline' | 'deep' | 'dense' | 'balance' | 'curl' | 'ice'
+  | 'jet' | 'grayscale'
 
 export interface ColormapConfig {
   name:      ColormapName
+  reversed:  boolean       // flip the palette direction
   min:       number        // overrides valid_min if set
   max:       number        // overrides valid_max if set
   logScale:  boolean

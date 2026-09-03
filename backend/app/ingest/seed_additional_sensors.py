@@ -47,6 +47,60 @@ BGC_FLOATS = [
 _DEPTHS = [0, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000]
 
 
+def _synthetic_current_profile(lat: float, lon: float):
+    """A plausible ADCP current profile: a wind-driven surface jet (~0.5 m/s) decaying with
+    depth, a weak reversing undercurrent near 150 m, near-zero below 800 m. Direction rotates
+    slowly with depth (Ekman-like veering)."""
+    import numpy as np
+    d = np.array(_DEPTHS, dtype=float)
+    surf_speed = 0.45 + 0.1 * np.cos(np.radians(lat * 7))
+    speed = surf_speed * np.exp(-d / 180.0) - 0.06 * np.exp(-((d - 150.0) ** 2) / (2 * 70.0 ** 2))
+    speed = np.abs(speed)
+    heading = np.radians(50.0 + 0.12 * d)          # veers with depth
+    u = speed * np.sin(heading)
+    v = speed * np.cos(heading)
+    return {"depth": d, "current_u": u, "current_v": v, "current_speed": speed}
+
+
+def _write_current_profiles_nc(path: Path, stations) -> None:
+    """Flat per-measurement table for ADCP current profiles — same 'row' shape as the T/S
+    profile files, with u/v/speed columns instead of temp/psal."""
+    if path.exists():
+        return
+    import numpy as np
+    from netCDF4 import Dataset
+
+    rows_pid, rows_cyc, rows_pres, rows_u, rows_v, rows_spd, rows_lat, rows_lon = ([] for _ in range(8))
+    for pid, _type, lat, lon in stations:
+        p = _synthetic_current_profile(lat, lon)
+        n = len(p["depth"])
+        rows_pid += [pid] * n
+        rows_cyc += [1] * n
+        rows_pres += list(p["depth"])
+        rows_u += list(p["current_u"])
+        rows_v += list(p["current_v"])
+        rows_spd += list(p["current_speed"])
+        rows_lat += [lat] * n
+        rows_lon += [lon] * n
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ds = Dataset(path, "w", format="NETCDF4")
+    ds.createDimension("row", len(rows_pid))
+    ds.Conventions = "CF-1.6"
+    ds.title = "TARANG synthetic ADCP demo current profiles"
+
+    v = ds.createVariable("platform_number", str, ("row",)); v[:] = np.array(rows_pid, dtype=object)
+    ds.createVariable("cycle_number", "i4", ("row",))[:] = rows_cyc
+    pr = ds.createVariable("pres", "f4", ("row",)); pr.units = "dbar"; pr.standard_name = "sea_water_pressure"; pr[:] = rows_pres
+    cu = ds.createVariable("current_u", "f4", ("row",)); cu.units = "m s-1"; cu.standard_name = "eastward_sea_water_velocity"; cu[:] = rows_u
+    cv = ds.createVariable("current_v", "f4", ("row",)); cv.units = "m s-1"; cv.standard_name = "northward_sea_water_velocity"; cv[:] = rows_v
+    cs = ds.createVariable("current_speed", "f4", ("row",)); cs.units = "m s-1"; cs.standard_name = "sea_water_speed"; cs[:] = rows_spd
+    la = ds.createVariable("latitude", "f4", ("row",)); la.units = "degrees_north"; la[:] = rows_lat
+    lo = ds.createVariable("longitude", "f4", ("row",)); lo.units = "degrees_east"; lo[:] = rows_lon
+    ds.close()
+    logger.info(f"Wrote {len(stations)} synthetic ADCP current profiles → {path}")
+
+
 def _synthetic_profile(lat: float, lon: float, with_chl: bool):
     """A plausible tropical Indian-Ocean profile: warm mixed layer, sharp thermocline, cool deep;
     fresher surface, saltier at depth; sub-surface chlorophyll maximum near the thermocline."""
@@ -59,6 +113,11 @@ def _synthetic_profile(lat: float, lon: float, with_chl: bool):
     if with_chl:
         chl = 0.12 + 0.85 * np.exp(-((d - 55.0) ** 2) / (2 * 28.0 ** 2))   # DCM ~55 m
         out["chlorophyll"] = np.maximum(chl, 0.02)
+        # BGC-Argo also carries oxygen / nitrate / pH — a shallow oxygen minimum zone
+        # (classic north Indian Ocean), nutricline near the thermocline, pH falling with depth.
+        out["oxygen"] = np.clip(215.0 - 170.0 * np.exp(-((d - 350.0) ** 2) / (2 * 250.0 ** 2)), 10.0, 230.0)
+        out["nitrate"] = 0.4 + 28.0 / (1.0 + np.exp(-(d - 140.0) / 45.0))
+        out["ph"] = 8.10 - 0.32 / (1.0 + np.exp(-(d - 280.0) / 110.0))
     return out
 
 
@@ -70,7 +129,8 @@ def _write_profiles_nc(path: Path, stations, with_chl: bool) -> None:
     import numpy as np
     from netCDF4 import Dataset
 
-    rows_pid, rows_cyc, rows_pres, rows_t, rows_s, rows_chl, rows_lat, rows_lon = ([] for _ in range(8))
+    rows_pid, rows_cyc, rows_pres, rows_t, rows_s, rows_lat, rows_lon = ([] for _ in range(7))
+    rows_chl, rows_o2, rows_no3, rows_ph = [], [], [], []
     for pid, _type, lat, lon in stations:
         p = _synthetic_profile(lat, lon, with_chl)
         n = len(p["depth"])
@@ -83,6 +143,9 @@ def _write_profiles_nc(path: Path, stations, with_chl: bool) -> None:
         rows_lon += [lon] * n
         if with_chl:
             rows_chl += list(p["chlorophyll"])
+            rows_o2 += list(p["oxygen"])
+            rows_no3 += list(p["nitrate"])
+            rows_ph += list(p["ph"])
 
     path.parent.mkdir(parents=True, exist_ok=True)
     ds = Dataset(path, "w", format="NETCDF4")
@@ -101,6 +164,15 @@ def _write_profiles_nc(path: Path, stations, with_chl: bool) -> None:
         c = ds.createVariable("chlorophyll", "f4", ("row",))
         c.units = "mg m-3"; c.standard_name = "mass_concentration_of_chlorophyll_a_in_sea_water"
         c[:] = rows_chl
+        o = ds.createVariable("oxygen", "f4", ("row",))
+        o.units = "micromole kg-1"; o.standard_name = "moles_of_oxygen_per_unit_mass_in_sea_water"
+        o[:] = rows_o2
+        nn = ds.createVariable("nitrate", "f4", ("row",))
+        nn.units = "micromole kg-1"; nn.standard_name = "moles_of_nitrate_per_unit_mass_in_sea_water"
+        nn[:] = rows_no3
+        ph = ds.createVariable("ph", "f4", ("row",))
+        ph.units = "1"; ph.standard_name = "sea_water_ph_reported_on_total_scale"
+        ph[:] = rows_ph
     ds.close()
     logger.info(f"Wrote {len(stations)} synthetic profiles → {path}")
 
@@ -111,6 +183,8 @@ def seed(db_url: str) -> None:
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     _write_profiles_nc(data_dir / "ctd" / "ctd_demo.nc", CTD_CASTS, with_chl=False)
     _write_profiles_nc(data_dir / "bgc" / "bgc_demo.nc", BGC_FLOATS, with_chl=True)
+    _write_profiles_nc(data_dir / "mooring" / "mooring_demo.nc", MOORINGS, with_chl=False)
+    _write_current_profiles_nc(data_dir / "adcp" / "adcp_demo.nc", ADCP_STATIONS)
 
     conn = psycopg2.connect(db_url)
     cur = conn.cursor()

@@ -2,8 +2,9 @@ uniform sampler2D u_data;
 uniform vec2 u_clim;
 uniform float u_opacity;
 uniform float u_missing;
-uniform float u_colormap;   // 0=viridis 1=plasma 2=magma 3=inferno 4=jet — see ColormapName in api/types.ts
+uniform float u_colormap;   // legacy, unused — palette now comes from u_cmap
 uniform float u_log_scale;  // 0=linear 1=log
+uniform sampler2D u_cmap;   // 256×1 palette LUT built by scene/colormaps.ts buildColormapLUT()
 varying vec2 vUv;
 
 // 5-stop piecewise-linear interpolation, evenly spaced at t=0,0.25,0.5,0.75,1.0. Stop colors
@@ -59,22 +60,9 @@ vec3 jet(float t) {
 }
 
 vec3 applyColormap(float t) {
-    // else-if (not independent `if (cond) return`) so every backend's control-flow analysis can
-    // see this is exhaustive — the ANGLE GLSL->HLSL translator (used on the D3D11 WebGL backend)
-    // flagged the independent-if form as "use of potentially uninitialized variable" even though
-    // every branch returns, because it flattens early returns into a temp-variable pattern and
-    // couldn't statically prove the conditions cover all cases without an explicit else.
-    if (u_colormap < 0.5) {
-        return viridis(t);
-    } else if (u_colormap < 1.5) {
-        return plasma(t);
-    } else if (u_colormap < 2.5) {
-        return magma(t);
-    } else if (u_colormap < 3.5) {
-        return inferno(t);
-    } else {
-        return jet(t);
-    }
+    // Palette is a 256×1 LUT texture (scene/colormaps.ts). Reversing and palette
+    // choice are baked into the texture on the JS side, so the shader just looks up.
+    return texture2D(u_cmap, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
 }
 
 void main() {

@@ -1,17 +1,7 @@
 
 import React from 'react'
 import { useTarangStore } from '../state/store'
-import type { ColormapName } from '../api/types'
-
-// Same 5 stops as colormapFrag.glsl/volumeFrag_v2.glsl's palette functions — kept in sync so the
-// legend actually shows the gradient that's rendering, not a fixed unrelated one.
-const PALETTE_STOPS: Record<ColormapName, string[]> = {
-  viridis: ['rgb(68,1,84)', 'rgb(59,82,139)', 'rgb(33,145,140)', 'rgb(94,201,98)', 'rgb(253,231,37)'],
-  plasma: ['rgb(13,8,135)', 'rgb(126,3,168)', 'rgb(204,71,120)', 'rgb(248,149,65)', 'rgb(240,249,33)'],
-  magma: ['rgb(0,0,4)', 'rgb(59,15,112)', 'rgb(140,41,129)', 'rgb(222,73,104)', 'rgb(252,253,191)'],
-  inferno: ['rgb(0,0,4)', 'rgb(66,10,104)', 'rgb(147,38,103)', 'rgb(221,81,58)', 'rgb(252,255,164)'],
-  jet: ['rgb(0,0,127)', 'rgb(0,255,255)', 'rgb(127,255,127)', 'rgb(255,255,0)', 'rgb(127,0,0)'],
-}
+import { colormapGradientCSS } from '../scene/colormaps'
 
 export function Legend() {
   const colormap = useTarangStore(s => s.colormap)
@@ -23,8 +13,7 @@ export function Legend() {
   const max = colormap.max.toFixed(1)
   const mid = ((colormap.min + colormap.max) / 2).toFixed(1)
 
-  const stops = PALETTE_STOPS[colormap.name] ?? PALETTE_STOPS.viridis
-  const gradient = `linear-gradient(to top, ${stops.join(', ')})`
+  const gradient = colormapGradientCSS(colormap.name, colormap.reversed, 'to top')
 
   return (
     <div style={styles.container}>

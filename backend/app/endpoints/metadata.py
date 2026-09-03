@@ -39,6 +39,8 @@ async def get_metadata(source: str, request: Request):
     registry  = request.app.state.registry
     cache     = request.app.state.cache
 
+    registry.ensure_loaded()   # self-heal a wiped worker before it 404s
+
     # ── Validate source ───────────────────────────────────────────────────────
     try:
         adapter = registry.get_adapter(source)
@@ -72,6 +74,7 @@ async def get_metadata(source: str, request: Request):
 async def list_sources(request: Request):
     """List all registered data source IDs and labels. Used to populate the source dropdown."""
     registry = request.app.state.registry
+    registry.ensure_loaded()   # self-heal a wiped worker so the dropdown never comes back empty
     sources = [
         {"id": m["id"], "label": m.get("label", m["id"]), "render_type": m.get("render_type", "slice")}
         for m in registry.all_manifests()

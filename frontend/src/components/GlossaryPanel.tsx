@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 
 const GLOSSARY_TERMS = [
   { term: 'EEZ', def: 'Exclusive Economic Zone' },
@@ -44,9 +44,30 @@ const GLOSSARY_TERMS = [
 
 import { useTarangStore } from '../state/store'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+
+interface OgcSource {
+  id: string; label: string; standard_name: string; units: string
+  opendap?: string; wms?: string; wcs?: string; ncss?: string
+  wms_option_b: string; wcs_option_b: string
+}
+interface OgcEndpoints {
+  conventions: string
+  service_catalogs: Record<string, string>
+  sources: OgcSource[]
+}
+
 export function GlossaryPanel({ onClose }: { onClose: () => void }) {
   const [search, setSearch] = useState('')
   const sources = useTarangStore(s => s.sources)
+  const [ogc, setOgc] = useState<OgcEndpoints | null>(null)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/ogc/endpoints`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(setOgc)
+      .catch(() => setOgc(null))
+  }, [])
 
   const filtered = GLOSSARY_TERMS.filter(item => 
     item.term.toLowerCase().includes(search.toLowerCase()) || 
@@ -83,6 +104,35 @@ export function GlossaryPanel({ onClose }: { onClose: () => void }) {
                     <a href={`http://localhost:8080/thredds/catalog/tarang/catalog.html`} target="_blank" rel="noreferrer" style={{ color: '#00d4ff', textDecoration: 'none' }}>
                       [View on THREDDS]
                     </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {ogc && (
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ color: '#00d4ff', fontSize: '15px', fontWeight: '600', marginBottom: '4px', borderBottom: '1px solid rgba(0, 180, 255, 0.2)', paddingBottom: '4px' }}>
+                Open-Standards Data Access ({ogc.conventions})
+              </div>
+              <div style={{ ...styles.def, marginBottom: '10px' }}>
+                Every source is reachable over OGC WMS/WCS (served by the app) and, when the
+                THREDDS container is up, OPeNDAP + NCSS. Open these in QGIS, Panoply, or a browser.{' '}
+                <a href={ogc.service_catalogs.wms_capabilities_option_b} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>WMS GetCapabilities</a>
+                {' · '}
+                <a href={ogc.service_catalogs.wcs_capabilities_option_b} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>WCS GetCapabilities</a>
+              </div>
+              {ogc.sources.map(s => (
+                <div key={s.id} style={{ ...styles.item, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <div style={styles.term}>{s.label}</div>
+                  <div style={styles.def}>
+                    CF <code>{s.standard_name}</code> ({s.units})
+                  </div>
+                  <div style={{ ...styles.def, display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                    <a href={s.wms_option_b} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>WMS GetMap</a>
+                    <a href={s.wcs_option_b} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>WCS GetCoverage</a>
+                    {s.opendap && <a href={s.opendap} target="_blank" rel="noreferrer" style={{ color: '#7fb0d8' }}>OPeNDAP (THREDDS)</a>}
+                    {s.ncss && <a href={s.ncss} target="_blank" rel="noreferrer" style={{ color: '#7fb0d8' }}>NCSS (THREDDS)</a>}
                   </div>
                 </div>
               ))}

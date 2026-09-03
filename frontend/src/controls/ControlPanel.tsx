@@ -2,6 +2,19 @@ import React, { useMemo, useState, useEffect } from 'react'
 import { useTarangStore, debounce } from '../state/store'
 import { useT } from '../i18n/useT'
 import type { TranslationKey } from '../i18n/translations'
+import { colormapGradientCSS } from '../scene/colormaps'
+import { fetchSources, uploadDataSource } from '../api/client'
+import { prewarmTimeSteps } from '../api/prewarm'
+
+// Grouped so the dropdown reads as a curated set, not a dump. cmocean palettes are
+// the oceanography-standard choice (thermal→temperature, haline→salinity,
+// balance/curl→anomalies, deep→depth); matplotlib set kept for familiarity.
+const PALETTE_GROUPS: { label: string; names: string[] }[] = [
+  { label: 'Ocean (cmocean)', names: ['thermal', 'haline', 'deep', 'dense', 'ice'] },
+  { label: 'Diverging (anomalies)', names: ['balance', 'curl'] },
+  { label: 'Perceptual', names: ['viridis', 'plasma', 'magma', 'inferno'] },
+  { label: 'Other', names: ['jet', 'grayscale'] },
+]
 
 /**
  * ControlPanel — Container for all Forecaster Console controls.
@@ -18,8 +31,65 @@ export function ControlPanel() {
     colormap, setColormap, setColormapName,
     layerVisibility, toggleLayer,
     dataSourceMode, setDataSourceMode,
+    setSources,
   } = useTarangStore()
   const t = useT()
+
+  // Download the current source/variable, clipped to the searched region + time step,
+  // as a CF-NetCDF via the OGC WCS GetCoverage endpoint (RangeSubset picks the variable).
+  const [dl, setDl] = useState<{ busy: boolean; msg: string; err: boolean }>({ busy: false, msg: '', err: false })
+  async function downloadCurrentView() {
+    const bbox = useTarangStore.getState().bbox
+    const [minLon, minLat, maxLon, maxLat] = bbox
+    const qs = new URLSearchParams({
+      SERVICE: 'WCS', VERSION: '2.0.1', REQUEST: 'GetCoverage',
+      COVERAGEID: activeSourceId,
+      RANGESUBSET: activeVar,
+      'SUBSET[latitude]': `(${minLat},${maxLat})`,
+      'SUBSET[longitude]': `(${minLon},${maxLon})`,
+      'SUBSET[time]': `(${activeTimeIdx},${activeTimeIdx})`,
+    })
+    const base = import.meta.env.VITE_API_BASE_URL || '/api'
+    setDl({ busy: true, msg: 'Preparing NetCDF…', err: false })
+    try {
+      const res = await fetch(`${base}/wcs?${qs}`)
+      if (!res.ok) throw new Error(`server returned ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${activeSourceId}_${activeVar}_t${activeTimeIdx}.nc`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+      setDl({ busy: false, err: false, msg: `Downloaded ${(blob.size / 1024).toFixed(0)} KB` })
+    } catch (e: any) {
+      setDl({ busy: false, err: true, msg: `Download failed: ${e?.message || e}` })
+    }
+  }
+
+  // ── Upload a NetCDF/CSV → new registry source ──────────────────────────────
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const [uploadState, setUploadState] = useState<{ busy: boolean; msg: string; err: boolean }>({
+    busy: false, msg: '', err: false,
+  })
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''  // allow re-selecting the same file later
+    if (!file) return
+    setUploadState({ busy: true, msg: `Uploading ${file.name}…`, err: false })
+    try {
+      const res = await uploadDataSource(file)
+      setSources(await fetchSources())
+      setActiveSource(res.id)
+      setUploadState({
+        busy: false, err: false,
+        msg: `Added “${res.id}” — ${res.variable}, ${res.render_type}${res.depth_levels.length ? `, ${res.depth_levels.length} levels` : ''}`,
+      })
+    } catch (err: any) {
+      setUploadState({ busy: false, err: true, msg: err?.message || 'Upload failed' })
+    }
+  }
 
   // Debounced depth/time slider handlers (150ms — §10)
   const debouncedDepth = useMemo(() => debounce(setActiveDepthIdx, 150), [])
@@ -54,15 +124,23 @@ export function ControlPanel() {
   useEffect(() => {
     let interval: any
     if (isPlaying) {
+      // Warm every frame in the background so playback advances into cached data.
+      prewarmTimeSteps({
+        source: activeSourceId,
+        variable: activeVar,
+        depth: depthLevels[activeDepthIdx] ?? 0,
+        bbox: useTarangStore.getState().bbox,
+        nSteps: timeSteps.length,
+      })
       interval = setInterval(() => {
         if (timeSteps.length > 0) {
           const nextIdx = (activeTimeIdx + 1) % timeSteps.length
           setActiveTimeIdx(nextIdx)
         }
-      }, 500)
+      }, 600)
     }
     return () => clearInterval(interval)
-  }, [isPlaying, activeTimeIdx, timeSteps.length, setActiveTimeIdx])
+  }, [isPlaying, activeTimeIdx, timeSteps.length, setActiveTimeIdx, activeSourceId, activeVar, activeDepthIdx, depthLevels])
 
   const activeDepthM = depthLevels[activeDepthIdx] ?? 0
 
@@ -115,6 +193,31 @@ export function ControlPanel() {
           onChange={e => setActiveSource(e.target.value)}
           options={sources.map(s => ({ value: s.id, label: s.label }))}
         />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".nc,.nc4,.cdf,.netcdf,.csv,.txt,.tsv,.dat"
+          onChange={handleUpload}
+          style={{ display: 'none' }}
+        />
+        <button
+          id="add-source-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploadState.busy}
+          style={{
+            width: '100%', padding: '6px 10px', marginTop: '2px',
+            background: 'rgba(0, 30, 60, 0.6)', border: '1px dashed rgba(0, 180, 255, 0.35)',
+            borderRadius: '6px', color: '#a0c4e8', fontSize: '12px',
+            cursor: uploadState.busy ? 'wait' : 'pointer',
+          }}
+        >
+          {uploadState.busy ? '⏳ ' + uploadState.msg : `＋ ${t('addSource')}`}
+        </button>
+        {!uploadState.busy && uploadState.msg && (
+          <div style={{ fontSize: '11px', color: uploadState.err ? '#ff6b6b' : '#4caf88', lineHeight: 1.4 }}>
+            {uploadState.msg}
+          </div>
+        )}
       </Section>
 
       {/* Variable Selector — one entry per variable the source exposes; disabled if only one. */}
@@ -211,18 +314,40 @@ export function ControlPanel() {
 
       {/* ── Colormap ─────────────────────────────────────────────────── */}
       <Section label={t('colormap')}>
-        <Select
+        <select
           id="colormap-select"
           value={colormap.name}
           onChange={e => setColormapName(e.target.value as any)}
-          options={[
-            { value: 'viridis', label: 'Viridis' },
-            { value: 'plasma',  label: 'Plasma'  },
-            { value: 'magma',   label: 'Magma'   },
-            { value: 'inferno', label: 'Inferno' },
-            { value: 'jet',     label: 'Jet'     },
-          ]}
+          style={styles.select}
+        >
+          {PALETTE_GROUPS.map(g => (
+            <optgroup key={g.label} label={g.label} style={{ background: '#001e3c' }}>
+              {g.names.map(n => (
+                <option key={n} value={n} style={{ background: '#001e3c', color: '#a0c4e8' }}>
+                  {n.charAt(0).toUpperCase() + n.slice(1)}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {/* Live gradient preview — reflects palette choice + reverse toggle */}
+        <div
+          style={{
+            height: '12px', borderRadius: '3px', marginTop: '2px',
+            border: '1px solid rgba(255,255,255,0.15)',
+            background: colormapGradientCSS(colormap.name, colormap.reversed, 'to right'),
+          }}
         />
+        <label style={styles.checkRow}>
+          <input
+            id="reverse-palette-toggle"
+            type="checkbox"
+            checked={colormap.reversed}
+            onChange={() => setColormap({ reversed: !colormap.reversed })}
+            style={{ accentColor: '#00d4ff' }}
+          />
+          <span style={{ color: '#a0c4e8', fontSize: '13px' }}>{t('reversePalette')}</span>
+        </label>
         <label style={styles.checkRow}>
           <input
             id="log-scale-toggle"
@@ -285,6 +410,26 @@ export function ControlPanel() {
             </span>
           </label>
         ))}
+      </Section>
+
+      {/* ── Export ──────────────────────────────────────────────────── */}
+      <Section label={t('export')}>
+        <button
+          id="download-view-btn"
+          onClick={downloadCurrentView}
+          disabled={dl.busy}
+          style={{
+            width: '100%', padding: '7px 10px',
+            background: 'rgba(0, 30, 60, 0.6)', border: '1px solid rgba(0, 180, 255, 0.25)',
+            borderRadius: '6px', color: '#a0c4e8', fontSize: '12px',
+            cursor: dl.busy ? 'wait' : 'pointer',
+          }}
+        >
+          {dl.busy ? `⏳ ${dl.msg}` : `⭳ ${t('downloadView')}`}
+        </button>
+        {!dl.busy && dl.msg && (
+          <div style={{ fontSize: '11px', color: dl.err ? '#ff6b6b' : '#4caf88', lineHeight: 1.4 }}>{dl.msg}</div>
+        )}
       </Section>
 
     </div>

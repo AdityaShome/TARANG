@@ -3,16 +3,20 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 import { useTarangStore } from '../state/store'
-import { fetchSlice, fetchInstruments } from '../api/client'
+import { fetchSlice, fetchInstruments, fetchProfile } from '../api/client'
 import { fetchEddyDetection, fetchFrontDetection } from '../api/eddy'
 import { clampRegionSpan, REGION_MAX_PICK_SPAN_DEG } from '../api/geocode'
 import { computeDataRange } from './layers/dataStats'
+import { PALETTES, samplePalette } from './colormaps'
+import { fetchWaterMasses, WATER_MASS_COLORS } from '../api/derived'
+import { startFlowField, type FlowFieldHandle } from './flowField'
 import landGeo from '../assets/ne_110m_land.json'
 
 // Independent overlays share the globe's conventions: currents from a currents source, eddies
 // from a model source with u/v — NOT the active scalar "Data Source".
-// INCOIS NIO-HOOFS operational surface currents (uo/vo); synthetic fixture is the offline fallback.
-const VECTOR_SOURCE = 'incois_ocean'
+// Vectors + animated flow: Copernicus Marine uo/vo (40 depth levels) so they track the depth
+// slider through the water column. Eddies stay on INCOIS NIO-HOOFS (surface diagnostic).
+const VECTOR_SOURCE = 'copernicus_marine'
 const EDDY_SOURCE = 'incois_ocean'
 const EDDY_COLORS: Record<string, string> = { warm: '#ff8c00', cold: '#00e5ff', front: '#ffd700' }
 
@@ -32,30 +36,16 @@ const INDIA_BOUNDS = L.latLngBounds([-4, 50], [30, 102])
 // The India-ocean area of interest, drawn as a persistent reference frame on the map.
 const INDIA_AOI: L.LatLngBoundsExpression = [[-2, 55], [26, 100]]
 
-// Palettes — the same 5 stops as colormapFrag.glsl / Legend.tsx, as [r,g,b].
-const PALETTES: Record<string, number[][]> = {
-  viridis: [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
-  plasma:  [[13, 8, 135], [126, 3, 168], [204, 71, 120], [248, 149, 65], [240, 249, 33]],
-  magma:   [[0, 0, 4], [59, 15, 112], [140, 41, 129], [222, 73, 104], [252, 253, 191]],
-  inferno: [[0, 0, 4], [66, 10, 104], [147, 38, 103], [221, 81, 58], [252, 255, 164]],
-  jet:     [[0, 0, 127], [0, 255, 255], [127, 255, 127], [255, 255, 0], [127, 0, 0]],
-}
-
-
-function samplePalette(stops: number[][], t: number): [number, number, number] {
-  t = Math.min(1, Math.max(0, t)) * (stops.length - 1)
-  const i = Math.floor(t), f = t - i
-  const a = stops[i], b = stops[Math.min(i + 1, stops.length - 1)]
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
-}
+// Palette stops come from scene/colormaps.ts — one source of truth shared with the
+// globe shaders and the HTML legend.
 
 // Slice grid (lat,lon row-major, row 0 = south) → RGBA canvas (row 0 = north). Land / missing
 // cells render transparent so the basemap land shows through.
 function gridToDataURL(
   data: Float32Array, lonSize: number, latSize: number,
-  missing: number, min: number, max: number, paletteName: string,
+  missing: number, min: number, max: number, paletteName: string, reversed: boolean,
 ): string {
-  const stops = PALETTES[paletteName] ?? PALETTES.viridis
+  const stops = PALETTES[paletteName as keyof typeof PALETTES] ?? PALETTES.viridis
   const canvas = document.createElement('canvas')
   canvas.width = lonSize
   canvas.height = latSize
@@ -72,7 +62,8 @@ function gridToDataURL(
         img.data[di + 3] = 0
         continue
       }
-      const [r, g, b] = samplePalette(stops, (v - min) / span)
+      const norm = (v - min) / span
+      const [r, g, b] = samplePalette(stops, reversed ? 1 - norm : norm)
       img.data[di] = r; img.data[di + 1] = g; img.data[di + 2] = b; img.data[di + 3] = 235
     }
   }
@@ -92,6 +83,12 @@ export function IndiaMapView() {
   const overlaysRef = useRef<L.LayerGroup | null>(null)
   const overlaysRendererRef = useRef<L.SVG | null>(null)
   const overlaysAbortRef = useRef<AbortController | null>(null)
+  const waterMassOverlayRef = useRef<L.ImageOverlay | null>(null)
+  const waterMassLegendRef = useRef<L.Control | null>(null)
+  const waterMassAbortRef = useRef<AbortController | null>(null)
+  const flowRef = useRef<FlowFieldHandle | null>(null)
+  const flowCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const flowAbortRef = useRef<AbortController | null>(null)
 
   const bbox = useTarangStore(s => s.bbox)
   const hasSearchedRegion = useTarangStore(s => s.hasSearchedRegion)
@@ -100,8 +97,10 @@ export function IndiaMapView() {
   const activeDepthIdx = useTarangStore(s => s.activeDepthIdx)
   const activeTimeIdx = useTarangStore(s => s.activeTimeIdx)
   const colormapName = useTarangStore(s => s.colormap.name)
+  const colormapReversed = useTarangStore(s => s.colormap.reversed)
   const layerVisibility = useTarangStore(s => s.layerVisibility)
   const instrumentColors = useTarangStore(s => s.instrumentColors)
+  const selectedPlatformId = useTarangStore(s => s.selectedPlatformId)
   const renderMode = useTarangStore(s => s.renderMode)
 
   // ── Mount: build the map + pick handlers ────────────────────────────────
@@ -267,7 +266,7 @@ export function IndiaMapView() {
           useTarangStore.getState().setColormap({ min: dMin, max: dMax })
           useTarangStore.getState().setRegionDataMissing(false)
 
-          const url = gridToDataURL(data, lonSize, latSize, header.missing_value, dMin, dMax, colormapName)
+          const url = gridToDataURL(data, lonSize, latSize, header.missing_value, dMin, dMax, colormapName, colormapReversed)
           const b = L.latLngBounds([header.bounds.lat[0], header.bounds.lon[0]], [header.bounds.lat[1], header.bounds.lon[1]])
           if (overlayRef.current) overlayRef.current.remove()
           overlayRef.current = L.imageOverlay(url, b, { pane: 'data', opacity: 0.92, interactive: false }).addTo(map)
@@ -281,8 +280,8 @@ export function IndiaMapView() {
         }
       }
     })()
-  // colormapName included so a palette change re-renders the raster
-  }, [bbox, hasSearchedRegion, activeSourceId, activeVar, activeDepthIdx, activeTimeIdx, colormapName, layerVisibility, renderMode])
+  // colormapName / colormapReversed included so a palette change re-renders the raster
+  }, [bbox, hasSearchedRegion, activeSourceId, activeVar, activeDepthIdx, activeTimeIdx, colormapName, colormapReversed, layerVisibility, renderMode])
 
   // ── Region box + instrument markers ────────────────────────────────────
   useEffect(() => {
@@ -319,13 +318,17 @@ export function IndiaMapView() {
       .then(({ instruments }) => {
         if (ctl.signal.aborted) return
         const colors = useTarangStore.getState().instrumentColors
+        const selId = useTarangStore.getState().selectedPlatformId
         const counts = new Map<string, number>()
         for (const inst of instruments) {
           counts.set(inst.type, (counts.get(inst.type) ?? 0) + 1)
+          const isSel = inst.platform_id === selId
           L.circleMarker([inst.lat, inst.lon], {
-            radius: 4,
+            radius: isSel ? 9 : 4,
             fillColor: colors[inst.type] ?? colors.other ?? '#ffffff',
-            color: '#04121f', weight: 1, fillOpacity: 0.95,
+            color: isSel ? '#ffffff' : '#04121f',
+            weight: isSel ? 2.5 : 1,
+            fillOpacity: 0.95,
           })
             .on('click', () => useTarangStore.getState().setSelectedPlatform(inst.platform_id))
             .addTo(group)
@@ -333,9 +336,33 @@ export function IndiaMapView() {
         useTarangStore.getState().setInstrumentsInView(
           [...counts.entries()].map(([type, count]) => ({ type, count })),
         )
+
+        // Draw a surface current arrow at each ADCP / mooring station from its own
+        // profile — the PS asks for ADCP shown as a current-vector, not just a dot.
+        const currentStations = instruments.filter(i => i.type === 'adcp' || i.type === 'mooring').slice(0, 16)
+        for (const st of currentStations) {
+          fetchProfile(st.platform_id, undefined, undefined, ctl.signal)
+            .then(p => {
+              if (ctl.signal.aborted) return
+              const u = p.current_u?.[0], v = p.current_v?.[0]
+              if (u == null || v == null) return
+              const spd = Math.hypot(u, v)
+              if (spd < 1e-3) return
+              const ang = Math.atan2(v, u)
+              const len = Math.min(1.2, 0.3 + spd * 2.2)   // degrees
+              const tip: [number, number] = [st.lat + Math.sin(ang) * len, st.lon + Math.cos(ang) * len]
+              const barb = len * 0.35
+              group.addLayer(L.polyline([
+                [st.lat, st.lon], tip,
+                [tip[0] - Math.sin(ang - 0.5) * barb, tip[1] - Math.cos(ang - 0.5) * barb], tip,
+                [tip[0] - Math.sin(ang + 0.5) * barb, tip[1] - Math.cos(ang + 0.5) * barb],
+              ], { color: colors[st.type] ?? '#b388ff', weight: 2, opacity: 0.95, interactive: false }))
+            })
+            .catch(() => { /* station without a current profile — just leave the dot */ })
+        }
       })
       .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
-  }, [bbox, hasSearchedRegion, layerVisibility, instrumentColors])
+  }, [bbox, hasSearchedRegion, layerVisibility, instrumentColors, selectedPlatformId])
 
   // ── Current vectors / fronts / eddies — the same overlays the globe has ─
   useEffect(() => {
@@ -429,6 +456,122 @@ export function IndiaMapView() {
     }
     })()
   }, [bbox, hasSearchedRegion, activeSourceId, activeVar, activeTimeIdx, activeDepthIdx, layerVisibility])
+
+  // ── Water-mass classification overlay (derived ML product) ─────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    const clear = () => {
+      if (waterMassOverlayRef.current) { waterMassOverlayRef.current.remove(); waterMassOverlayRef.current = null }
+      if (waterMassLegendRef.current) { waterMassLegendRef.current.remove(); waterMassLegendRef.current = null }
+    }
+    waterMassAbortRef.current?.abort()
+    if (!hasSearchedRegion || !layerVisibility['waterMasses']) { clear(); return }
+
+    const ctl = new AbortController()
+    waterMassAbortRef.current = ctl
+    const depthM = useTarangStore.getState().depthLevels[activeDepthIdx] ?? 0
+
+    fetchWaterMasses({ source: activeSourceId, time: activeTimeIdx, depth: depthM, bbox, k: 4 }, ctl.signal)
+      .then(res => {
+        if (ctl.signal.aborted) return
+        clear()
+        const [latN, lonN] = res.shape
+        const canvas = document.createElement('canvas')
+        canvas.width = lonN; canvas.height = latN
+        const ctx = canvas.getContext('2d')!
+        const img = ctx.createImageData(lonN, latN)
+        for (let y = 0; y < latN; y++) {
+          const srcRow = (latN - 1 - y) * lonN   // flip south→bottom
+          for (let x = 0; x < lonN; x++) {
+            const lbl = res.labels[srcRow + x]
+            const di = (y * lonN + x) * 4
+            if (lbl < 0) { img.data[di + 3] = 0; continue }
+            const hex = WATER_MASS_COLORS[lbl % WATER_MASS_COLORS.length]
+            img.data[di] = parseInt(hex.slice(1, 3), 16)
+            img.data[di + 1] = parseInt(hex.slice(3, 5), 16)
+            img.data[di + 2] = parseInt(hex.slice(5, 7), 16)
+            img.data[di + 3] = 200
+          }
+        }
+        ctx.putImageData(img, 0, 0)
+        const [loA, loB] = res.bounds.lon, [laA, laB] = res.bounds.lat
+        waterMassOverlayRef.current = L.imageOverlay(canvas.toDataURL(), [[laA, loA], [laB, loB]], {
+          pane: 'data', opacity: 0.75, interactive: false,
+        }).addTo(map)
+
+        const legend = new L.Control({ position: 'bottomright' })
+        legend.onAdd = () => {
+          const div = L.DomUtil.create('div')
+          div.style.cssText = 'background:rgba(8,15,30,0.85);padding:8px 10px;border-radius:8px;color:#cfe;font:11px Inter,sans-serif;border:1px solid rgba(0,180,255,0.3)'
+          div.innerHTML = `<b style="color:#00d4ff">Water masses (k-means)</b><br/>` +
+            res.centroids.map(c =>
+              `<span style="display:inline-block;width:10px;height:10px;background:${WATER_MASS_COLORS[c.label % WATER_MASS_COLORS.length]};margin-right:5px;border-radius:2px"></span>` +
+              `${c.temperature.toFixed(1)}°C / ${c.salinity.toFixed(1)} PSU · ${(c.fraction * 100).toFixed(0)}%`
+            ).join('<br/>')
+          return div
+        }
+        legend.addTo(map)
+        waterMassLegendRef.current = legend
+      })
+      .catch((e: any) => { if (e?.name !== 'AbortError') console.warn('water_masses:', e?.message) })
+
+    return () => { ctl.abort() }
+  }, [bbox, hasSearchedRegion, activeSourceId, activeDepthIdx, activeTimeIdx, layerVisibility])
+
+  // ── Animated current-flow layer (particle advection over uo/vo) ────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    let zooming = false
+    const onZoomStart = () => { zooming = true }
+    const onZoomEnd = () => { zooming = false; flowRef.current?.resize() }
+    const onResize = () => flowRef.current?.resize()
+
+    const teardown = () => {
+      flowAbortRef.current?.abort()
+      flowRef.current?.stop(); flowRef.current = null
+      map.off('zoomstart', onZoomStart); map.off('zoomend', onZoomEnd); map.off('resize', onResize)
+      if (flowCanvasRef.current) { flowCanvasRef.current.remove(); flowCanvasRef.current = null }
+    }
+    teardown()
+    if (!hasSearchedRegion || !layerVisibility['flow']) return
+
+    const ctl = new AbortController()
+    flowAbortRef.current = ctl
+    const depthM = useTarangStore.getState().depthLevels[activeDepthIdx] ?? 0
+
+    Promise.all([
+      fetchSlice({ source: VECTOR_SOURCE, var: 'uo', depth: depthM, time: activeTimeIdx, bbox }, ctl.signal),
+      fetchSlice({ source: VECTOR_SOURCE, var: 'vo', depth: depthM, time: activeTimeIdx, bbox }, ctl.signal),
+    ]).then(([uR, vR]) => {
+      if (ctl.signal.aborted) return
+      const [nlat, nlon] = uR.header.shape
+      const [lonA, lonB] = uR.header.bounds.lon
+      const [latA, latB] = uR.header.bounds.lat
+
+      const canvas = document.createElement('canvas')
+      canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:440'
+      map.getContainer().appendChild(canvas)
+      flowCanvasRef.current = canvas
+
+      map.on('zoomstart', onZoomStart); map.on('zoomend', onZoomEnd); map.on('resize', onResize)
+
+      flowRef.current = startFlowField({
+        canvas,
+        grid: { u: uR.data, v: vR.data, nlat, nlon, lonA, lonB, latA, latB },
+        project: (lat, lon) => {
+          const p = map.latLngToContainerPoint([lat, lon])
+          return { x: p.x, y: p.y }
+        },
+        paused: () => zooming,
+      })
+    }).catch((e: any) => { if (e?.name !== 'AbortError') console.warn('flow:', e?.message) })
+
+    return teardown
+  }, [bbox, hasSearchedRegion, activeTimeIdx, activeDepthIdx, layerVisibility])
 
   return <div ref={mountRef} id="india-map" style={{ position: 'absolute', inset: 0, background: '#04121f' }} />
 }
