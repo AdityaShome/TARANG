@@ -32,6 +32,7 @@ type CFMetaMap = SourceMetadata['cf_metadata']   // per-variable CF metadata fro
 import type { LanguageCode } from '../i18n/translations'
 
 const LANGUAGE_STORAGE_KEY = 'tarang_language'
+const INSTRUMENT_COLORS_STORAGE_KEY = 'tarang_instrument_colors'
 
 function loadStoredLanguage(): LanguageCode {
   try {
@@ -39,6 +40,49 @@ function loadStoredLanguage(): LanguageCode {
     if (stored === 'en' || stored === 'hi' || stored === 'bn' || stored === 'te' || stored === 'ta') return stored
   } catch { /* localStorage unavailable (SSR/private mode) — fall through to default */ }
   return 'en'
+}
+
+// One colour per instrument type — used by the globe's InstrumentMarkerLayer and the 2D
+// IndiaMapView markers, and shown (with a colour picker per row) in the InstrumentLegend so
+// the operator can both READ what each dot means and RECOLOUR it (§ PS "customizable ...
+// variable controls" extends to the instrument overlay).
+export const DEFAULT_INSTRUMENT_COLORS: Record<string, string> = {
+  argo:    '#ffcc00',
+  glider:  '#00e5ff',
+  ctd:     '#ff6b6b',
+  bgc:     '#7cfc7c',
+  mooring: '#ff8c00',
+  adcp:    '#b388ff',
+  drifter: '#ff5ec8',
+  xbt:     '#8fd0ff',
+  other:   '#ffffff',
+}
+
+// Human-readable labels for the legend.
+export const INSTRUMENT_TYPE_LABELS: Record<string, string> = {
+  argo:    'Argo Float',
+  glider:  'Glider',
+  ctd:     'CTD Cast',
+  bgc:     'BGC Float',
+  mooring: 'Mooring',
+  adcp:    'ADCP',
+  drifter: 'Drifting Buoy',
+  xbt:     'XBT/XCTD',
+  other:   'Other',
+}
+
+function loadStoredInstrumentColors(): Record<string, string> {
+  const merged = { ...DEFAULT_INSTRUMENT_COLORS }
+  try {
+    const raw = localStorage.getItem(INSTRUMENT_COLORS_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      for (const k of Object.keys(parsed)) {
+        if (typeof parsed[k] === 'string' && /^#[0-9a-fA-F]{6}$/.test(parsed[k])) merged[k] = parsed[k]
+      }
+    }
+  } catch { /* ignore */ }
+  return merged
 }
 
 // ── Default values ────────────────────────────────────────────────────────────
@@ -128,6 +172,11 @@ interface TarangState {
   // Instrument selection
   selectedPlatformId: string | null
 
+  // Instrument marker colours (customizable, persisted) + which types are currently on screen
+  // (with counts) so the legend can list only the relevant rows.
+  instrumentColors:   Record<string, string>
+  instrumentsInView:  { type: string; count: number }[]
+
   // Layer visibility (keyed by layer id)
   layerVisibility: Record<string, boolean>
 
@@ -153,6 +202,9 @@ interface TarangState {
   setColormap:         (cfg: Partial<ColormapConfig>) => void
   setColormapName:     (name: ColormapName)    => void
   setSelectedPlatform: (id: string | null)     => void
+  setInstrumentColor:  (type: string, color: string) => void
+  resetInstrumentColors: () => void
+  setInstrumentsInView: (list: { type: string; count: number }[]) => void
   setSources:          (s: SourceEntry[])      => void
   setLoading:          (v: boolean)            => void
   setFetchingLayers:   (v: boolean)            => void
@@ -201,6 +253,8 @@ export const useTarangStore = create<TarangState>()(
     mapSelectMode:       'off',
 
     selectedPlatformId:  null,
+    instrumentColors:    loadStoredInstrumentColors(),
+    instrumentsInView:   [],
     layerVisibility:     {
       slice:      true,
       volume:     false,
@@ -280,6 +334,16 @@ export const useTarangStore = create<TarangState>()(
     setColormap:         (cfg)     => set(s => ({ colormap: { ...s.colormap, ...cfg } })),
     setColormapName:     (name)    => set(s => ({ colormap: { ...s.colormap, name } })),
     setSelectedPlatform: (id)      => set({ selectedPlatformId: id }),
+    setInstrumentColor:  (type, color) => set(s => {
+      const next = { ...s.instrumentColors, [type]: color }
+      try { localStorage.setItem(INSTRUMENT_COLORS_STORAGE_KEY, JSON.stringify(next)) } catch { /* private mode */ }
+      return { instrumentColors: next }
+    }),
+    resetInstrumentColors: () => {
+      try { localStorage.removeItem(INSTRUMENT_COLORS_STORAGE_KEY) } catch { /* private mode */ }
+      set({ instrumentColors: { ...DEFAULT_INSTRUMENT_COLORS } })
+    },
+    setInstrumentsInView: (list) => set({ instrumentsInView: list }),
     setSources:          (sources) => set({ sources }),
     setLoading:          (v)       => set({ isLoading: v }),
     setFetchingLayers:   (v)       => set({ isFetchingLayers: v }),

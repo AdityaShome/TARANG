@@ -64,11 +64,11 @@ const COLORMAP_INDEX: Record<ColormapName, number> = {
   viridis: 0, plasma: 1, magma: 2, inferno: 3, jet: 4,
 }
 
-// Same palette as InstrumentMarkerLayer.ts's TYPE_COLORS — one instrument overlay, one set of
-// colors, on the globe and in here.
-const TYPE_COLORS: Record<string, number> = {
-  argo: 0xffcc00, glider: 0x00e5ff, ctd: 0xff6b6b, bgc: 0x7cfc7c,
-  mooring: 0xff8c00, adcp: 0xb388ff, default: 0xffffff,
+// Instrument marker colours come from the store (user-customizable via InstrumentLegend) —
+// one palette everywhere: globe, 2D map, and this workspace.
+function markerColorHex(type: string): number {
+  const c = useTarangStore.getState().instrumentColors
+  return new THREE.Color(c[type] ?? c.other ?? '#ffffff').getHex()
 }
 
 // ── Canvas-texture text sprite (axis titles + tick labels) ─────────────────────────────────
@@ -325,7 +325,7 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
       .then(({ instruments }) => {
         if (disposed) return
         for (const inst of instruments) {
-          const color = TYPE_COLORS[inst.type] ?? TYPE_COLORS.default
+          const color = markerColorHex(inst.type)
           // Instruments carry no depth of their own — sit the pin on the sea surface (top face);
           // its full vertical profile is one click away in the popover.
           const marker = new THREE.Mesh(

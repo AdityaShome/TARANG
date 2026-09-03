@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { Layer, LayerParams } from '../LayerManager'
 import { fetchInstruments } from '../../api/client'
+import { useTarangStore } from '../../state/store'
 
 // Must match SceneManager.tsx's EARTH_RADIUS / latLonToXYZ exactly — see the identical
 // constants/fix in VolumeLayer.ts and IsosurfaceLayer.ts, which had this same bug: markers were
@@ -18,18 +19,13 @@ function latLonToXYZ(lat: number, lon: number, r = EARTH_RADIUS): THREE.Vector3 
   )
 }
 
-// One color per sensor type so the overlay actually reads as "multiple kinds of instruments",
-// not a single undifferentiated cloud of dots — matches the PS's "unified display of Argo
-// float and Glider profile data ... alongside model fields" requirement, extended to whatever
-// types a deployment's PostGIS data actually contains (falls back to TYPE_COLORS.default).
-const TYPE_COLORS: Record<string, number> = {
-  argo:    0xffcc00, // yellow
-  glider:  0x00e5ff, // cyan
-  ctd:     0xff6b6b, // red
-  bgc:     0x7cfc7c, // green
-  mooring: 0xff8c00, // orange
-  adcp:    0xb388ff, // violet
-  default: 0xffffff,
+// Per-sensor-type colours are user-customizable and live in the store (InstrumentLegend edits
+// them, localStorage persists them). Read fresh on every update() so a recolour takes effect.
+function colorFor(type: string): number {
+  const hex = useTarangStore.getState().instrumentColors[type]
+    ?? useTarangStore.getState().instrumentColors.other
+    ?? '#ffffff'
+  return new THREE.Color(hex).getHex()
 }
 
 // One InstancedMesh per sensor type, each with a plain solid-color material, rather than a
@@ -108,12 +104,16 @@ export class InstrumentMarkerLayer implements Layer {
           byType.set(inst.type, list)
         }
 
+        useTarangStore.getState().setInstrumentsInView(
+          [...byType.entries()].map(([type, list]) => ({ type, count: list.length })),
+        )
+
         const dummy = new THREE.Object3D()
 
         for (const [type, group] of byType) {
           // Radius in world units, not degrees — visible at a glance against a 200-radius globe.
           const geometry = new THREE.SphereGeometry(1.6, 16, 16)
-          const material = new THREE.MeshPhongMaterial({ color: TYPE_COLORS[type] ?? TYPE_COLORS.default })
+          const material = new THREE.MeshPhongMaterial({ color: colorFor(type) })
           const mesh = new THREE.InstancedMesh(geometry, material, group.length)
           mesh.frustumCulled = false // see the identical note in the other layers
 

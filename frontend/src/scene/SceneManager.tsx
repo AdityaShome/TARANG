@@ -164,6 +164,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
   const colormap        = useTarangStore(s => s.colormap)
   const bbox            = useTarangStore(s => s.bbox)
   const layerVisibility = useTarangStore(s => s.layerVisibility)
+  const instrumentColors = useTarangStore(s => s.instrumentColors)
   const isLoading       = useTarangStore(s => s.isLoading)
   const flyToTarget     = useTarangStore(s => s.flyToTarget)
   const clearFlyToTarget = useTarangStore(s => s.clearFlyToTarget)
@@ -686,7 +687,7 @@ export function SceneManager({ autoRotate = false }: SceneManagerProps) {
     // region's texture on screen. Depend only on the fields a user actually changes directly
     // (palette, opacity, log scale, vertical exaggeration) — min/max are fetch OUTPUT, not input.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderMode, activeSourceId, activeVar, activeTimeIdx, activeDepthIdx, bbox, colormap.name, colormap.opacity, colormap.logScale, colormap.verticalExaggeration, layerVisibility, isLoading, hasSearchedRegion])
+  }, [renderMode, activeSourceId, activeVar, activeTimeIdx, activeDepthIdx, bbox, colormap.name, colormap.opacity, colormap.logScale, colormap.verticalExaggeration, layerVisibility, isLoading, hasSearchedRegion, instrumentColors])
 
   // ── Region search: fly the camera to the searched location ─────────────────
   useEffect(() => {

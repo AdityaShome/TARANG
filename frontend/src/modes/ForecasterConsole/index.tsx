@@ -7,6 +7,7 @@ import { SearchBar } from '../../controls/SearchBar'
 import { useTarangStore } from '../../state/store'
 import { ProfilePopover } from '../../charts/ProfilePopover'
 import { Legend } from '../../components/Legend'
+import { InstrumentLegend } from '../../components/InstrumentLegend'
 import { LanguageSwitcher } from '../../components/LanguageSwitcher'
 import { useT } from '../../i18n/useT'
 import { GlossaryPanel } from '../../components/GlossaryPanel'
@@ -135,6 +136,9 @@ export function ForecasterConsole() {
 
           {/* ── Thermal Legend (hidden while the slice overlay has no data to describe) ── */}
           {!(regionDataMissing && renderMode === 'slice') && <Legend />}
+
+          {/* ── Instrument legend + colour picker ────────────────────────── */}
+          <InstrumentLegend />
 
           {/* ── Glossary Panel ────────────────────────────────────────────── */}
           {showGlossary && <GlossaryPanel onClose={() => setShowGlossary(false)} />}

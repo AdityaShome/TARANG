@@ -295,8 +295,11 @@ export class OceanCubeLayer implements Layer {
     if (!this.scene || !this.lastBounds) return
 
     const sphereGeo = new THREE.SphereGeometry(1.0, 12, 12)
+    const gliderHex = new THREE.Color(
+      useTarangStore.getState().instrumentColors.glider ?? '#00e5ff',
+    ).getHex()
     const sphereMat = new THREE.MeshPhongMaterial({
-      color:     0x00e5ff,
+      color:     gliderHex,
       emissive:  0x004466,
       shininess: 100,
       transparent: true,
@@ -327,12 +330,7 @@ export class OceanCubeLayer implements Layer {
   // ── Other instrument types (white small spheres on surface) ───────────────
   private buildOtherMarkers(instruments: Array<{ lat: number; lon: number; type: string }>) {
     if (!this.scene) return
-    const TYPE_COLORS: Record<string, number> = {
-      ctd:     0xff6b6b,
-      bgc:     0x7cfc7c,
-      mooring: 0xff8c00,
-      adcp:    0xb388ff,
-    }
+    const storeColors = useTarangStore.getState().instrumentColors
     const byType = new Map<string, typeof instruments>()
     for (const inst of instruments) {
       const list = byType.get(inst.type) ?? []
@@ -341,7 +339,9 @@ export class OceanCubeLayer implements Layer {
     }
     for (const [type, group] of byType) {
       const geo = new THREE.SphereGeometry(1.2, 8, 8)
-      const mat = new THREE.MeshPhongMaterial({ color: TYPE_COLORS[type] ?? 0xffffff })
+      const mat = new THREE.MeshPhongMaterial({
+        color: new THREE.Color(storeColors[type] ?? storeColors.other ?? '#ffffff').getHex(),
+      })
       const mesh = new THREE.InstancedMesh(geo, mat, group.length)
       mesh.frustumCulled = false
       mesh.renderOrder = 5

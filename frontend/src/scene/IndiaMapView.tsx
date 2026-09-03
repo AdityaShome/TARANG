@@ -41,10 +41,6 @@ const PALETTES: Record<string, number[][]> = {
   jet:     [[0, 0, 127], [0, 255, 255], [127, 255, 127], [255, 255, 0], [127, 0, 0]],
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  argo: '#ffcc00', glider: '#00e5ff', ctd: '#ff6b6b', bgc: '#7cfc7c',
-  mooring: '#ff8c00', adcp: '#b388ff', default: '#ffffff',
-}
 
 function samplePalette(stops: number[][], t: number): [number, number, number] {
   t = Math.min(1, Math.max(0, t)) * (stops.length - 1)
@@ -105,6 +101,7 @@ export function IndiaMapView() {
   const activeTimeIdx = useTarangStore(s => s.activeTimeIdx)
   const colormapName = useTarangStore(s => s.colormap.name)
   const layerVisibility = useTarangStore(s => s.layerVisibility)
+  const instrumentColors = useTarangStore(s => s.instrumentColors)
   const renderMode = useTarangStore(s => s.renderMode)
 
   // ── Mount: build the map + pick handlers ────────────────────────────────
@@ -310,7 +307,10 @@ export function IndiaMapView() {
     const group = markersRef.current
     if (!group) return
     group.clearLayers()
-    if (!hasSearchedRegion || !layerVisibility['markers']) return
+    if (!hasSearchedRegion || !layerVisibility['markers']) {
+      useTarangStore.getState().setInstrumentsInView([])
+      return
+    }
 
     markerAbortRef.current?.abort()
     const ctl = new AbortController()
@@ -318,18 +318,24 @@ export function IndiaMapView() {
     fetchInstruments({ bbox }, ctl.signal)
       .then(({ instruments }) => {
         if (ctl.signal.aborted) return
+        const colors = useTarangStore.getState().instrumentColors
+        const counts = new Map<string, number>()
         for (const inst of instruments) {
+          counts.set(inst.type, (counts.get(inst.type) ?? 0) + 1)
           L.circleMarker([inst.lat, inst.lon], {
             radius: 4,
-            fillColor: TYPE_COLORS[inst.type] ?? TYPE_COLORS.default,
+            fillColor: colors[inst.type] ?? colors.other ?? '#ffffff',
             color: '#04121f', weight: 1, fillOpacity: 0.95,
           })
             .on('click', () => useTarangStore.getState().setSelectedPlatform(inst.platform_id))
             .addTo(group)
         }
+        useTarangStore.getState().setInstrumentsInView(
+          [...counts.entries()].map(([type, count]) => ({ type, count })),
+        )
       })
       .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
-  }, [bbox, hasSearchedRegion, layerVisibility])
+  }, [bbox, hasSearchedRegion, layerVisibility, instrumentColors])
 
   // ── Current vectors / fronts / eddies — the same overlays the globe has ─
   useEffect(() => {
