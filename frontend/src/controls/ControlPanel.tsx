@@ -182,7 +182,7 @@ export function ControlPanel() {
       </Section>
 
       {/* ── Time Slider ──────────────────────────────────────────────── */}
-      <Section label={`${t('timeStep')}: ${timeSteps[activeTimeIdx] ?? 'T+0'}`}>
+      <Section label={`${t('timeStep')}: ${timeSteps[activeTimeIdx] ?? 'T+0'}${timeSteps.length > 1 ? `  (${activeTimeIdx + 1}/${timeSteps.length})` : ''}`}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <button 
             onClick={() => setIsPlaying(!isPlaying)}
@@ -201,6 +201,12 @@ export function ControlPanel() {
             style={styles.slider}
           />
         </div>
+        {timeSteps.length > 1 && (
+          <div style={styles.sliderLabels}>
+            <span>{timeSteps[0]}</span>
+            <span>{timeSteps[timeSteps.length - 1]}</span>
+          </div>
+        )}
       </Section>
 
       {/* ── Colormap ─────────────────────────────────────────────────── */}

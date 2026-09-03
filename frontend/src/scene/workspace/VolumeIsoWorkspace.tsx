@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useTarangStore } from '../../state/store'
 import { Legend } from '../../components/Legend'
-import { fetchVolume, fetchIsosurface, fetchInstruments } from '../../api/client'
+import { fetchVolume, fetchIsosurface, fetchInstruments, fetchSlice } from '../../api/client'
+import { fetchEddyDetection, fetchFrontDetection } from '../../api/eddy'
 import { computeDataRange } from '../layers/dataStats'
 import type { RenderMode, ColormapName } from '../../api/types'
 
@@ -138,17 +139,61 @@ function makeFaceGrid(width: number, height: number, divisions: number, color: n
 
 type Status = 'loading' | 'ready' | 'empty' | 'error'
 
+// Volume frames for every (region/var, time) the workspace has fetched this session. Time-step
+// playback reads from here — a cache hit swaps a texture with zero network + zero scene rebuild.
+// Keyed by a "tag" (mode|source|var|threshold|bbox) so a new region/variable starts fresh.
+interface VolFrame { header: any; data: Float32Array }
+const _volCache = new Map<string, VolFrame>()
+function _volCachePut(key: string, frame: VolFrame) {
+  _volCache.set(key, frame)
+  while (_volCache.size > 48) {
+    const oldest = _volCache.keys().next().value
+    if (oldest === undefined) break
+    _volCache.delete(oldest)
+  }
+}
+// mode is always 'volume' here — threshold doesn't affect a volume fetch, so it's out of the key.
+const volCacheTag = (source: string, v: string, bbox: number[]) =>
+  `volume|${source}|${v}|${bbox.join(',')}`
+
 export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
   const mountRef = useRef<HTMLDivElement>(null)
   const [entered, setEntered] = useState(false)
   const [status, setStatus] = useState<Status>('loading')
   const [errMsg, setErrMsg] = useState<string | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  // Box geometry the surface-overlay effect needs, published by the main scene effect. Kept in
+  // a ref so toggling a layer only rebuilds the overlays, never the (expensive) volume.
+  const overlayCtxRef = useRef<{
+    project: (lon: number, lat: number, depthM: number) => THREE.Vector3
+    kmToWorld: number
+    overlayGroup: THREE.Group
+    markerMeshes: THREE.Mesh[]
+    markerIds: Map<THREE.Mesh, string>
+    currentSource: string
+    alive: { v: boolean }
+  } | null>(null)
+
+  // Box geometry + the persistent data mesh, published by the scene effect so the data effect
+  // can swap time steps in place without tearing the renderer down.
+  const volumeCtxRef = useRef<{
+    dataGroup: THREE.Group
+    worldToUnit: THREE.Matrix4
+    unitToWorld: THREE.Matrix4
+    lonW: number; latW: number; depthWorld: number
+    setDepthTicks: (m: number) => void
+    mesh: THREE.Mesh | null
+    alive: { v: boolean }
+  } | null>(null)
+  const [stepping, setStepping] = useState(false)
 
   const bbox = useTarangStore(s => s.bbox)
   const regionLabel = useTarangStore(s => s.regionLabel)
   const activeVar = useTarangStore(s => s.activeVar)
   const activeSourceId = useTarangStore(s => s.activeSourceId)
   const activeTimeIdx = useTarangStore(s => s.activeTimeIdx)
+  const setActiveTimeIdx = useTarangStore(s => s.setActiveTimeIdx)
+  const timeSteps = useTarangStore(s => s.timeSteps)
   const isoThreshold = useTarangStore(s => s.isoThreshold)
   const depthLevels = useTarangStore(s => s.depthLevels)
   const cfMetadata = useTarangStore(s => s.cfMetadata)
@@ -157,8 +202,19 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
   const verticalExaggeration = useTarangStore(s => s.colormap.verticalExaggeration)
   const setSelectedPlatform = useTarangStore(s => s.setSelectedPlatform)
   const setColormap = useTarangStore(s => s.setColormap)
+  const layerVisibility = useTarangStore(s => s.layerVisibility)
+  const toggleLayer = useTarangStore(s => s.toggleLayer)
 
   const units = cfMetadata[activeVar]?.units ?? ''
+
+  // How many time steps are already in the volume cache — drives the "buffering N/M" hint and
+  // recomputes each render (frequent enough during playback to tick up visibly).
+  const cachedFrames = mode === 'volume' && timeSteps.length > 1
+    ? timeSteps.reduce(
+        (n, _s, t) => n + (_volCache.has(`${volCacheTag(activeSourceId, activeVar, bbox)}#${t}`) ? 1 : 0),
+        0,
+      )
+    : timeSteps.length
 
   // Slide/fade the panel in on mount — the region fly-to (SceneManager, on searchRegion) is
   // already done by the time the user picks Volume/Iso, so this is the only transition here.
@@ -174,13 +230,29 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // Time-step playback. The volume for every step is prefetched + cached (see the data effect),
+  // so advancing a step swaps a texture in place — no scene rebuild, no loading screen. If the
+  // next frame isn't cached yet the swap just waits for its fetch; playback never stops itself.
+  useEffect(() => {
+    if (!isPlaying || timeSteps.length < 2) return
+    const id = setInterval(() => {
+      const st = useTarangStore.getState()
+      const next = (st.activeTimeIdx + 1) % timeSteps.length
+      // Hold on the current (rendered) frame until the prefetcher has buffered the next one —
+      // turns a stuttery first lap into a short pause, then smooth playback once buffered.
+      if (mode === 'volume') {
+        const key = `${volCacheTag(st.activeSourceId, st.activeVar, st.bbox)}#${next}`
+        if (!_volCache.has(key)) return
+      }
+      st.setActiveTimeIdx(next)
+    }, 850)
+    return () => clearInterval(id)
+  }, [isPlaying, timeSteps.length, mode])
+
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
 
-    let disposed = false
-    const abort = new AbortController()
-    setStatus('loading')
     setErrMsg(null)
 
     const [minLon, minLat, maxLon, maxLat] = bbox
@@ -318,148 +390,31 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     }
     setDepthTicks(maxDepthM)   // provisional — replaced on data load
 
-    // ── Instrument markers (co-visualization — the PS's core ask) ───────────
+    // ── Surface overlays (markers / eddies / fronts / vectors) ─────────────
+    // These are 2D surface fields — they float in a thin slab above the box's top face and
+    // are (re)built by a SEPARATE effect keyed on store.layerVisibility, so toggling one
+    // never rebuilds the volume. This effect just publishes the box geometry it needs.
+    const CURRENT_SOURCE = 'incois_ocean'   // has uo/vo — matches VectorLayer/EddyOverlayLayer
+    const kmToWorld = (1 / 111) / lonSpan * lonW
+    const overlayGroup = new THREE.Group()
+    scene.add(overlayGroup)
     const markerMeshes: THREE.Mesh[] = []
     const markerIds = new Map<THREE.Mesh, string>()
-    fetchInstruments({ bbox }, abort.signal)
-      .then(({ instruments }) => {
-        if (disposed) return
-        for (const inst of instruments) {
-          const color = markerColorHex(inst.type)
-          // Instruments carry no depth of their own — sit the pin on the sea surface (top face);
-          // its full vertical profile is one click away in the popover.
-          const marker = new THREE.Mesh(
-            new THREE.SphereGeometry(0.17, 16, 16),
-            new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.35 })
-          )
-          marker.position.copy(project(inst.lon, inst.lat, 0))
-          scene.add(marker)
-          markerMeshes.push(marker)
-          markerIds.set(marker, inst.platform_id)
-        }
-      })
-      .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
-
+    const alive = { v: true }
+    overlayCtxRef.current = {
+      project, kmToWorld, overlayGroup, markerMeshes, markerIds,
+      currentSource: CURRENT_SOURCE, alive,
+    }
     // ── Mode-specific real data mesh ───────────────────────────────────────
+    // The data mesh is (re)built and time-step-swapped by the SEPARATE data effect below — this
+    // effect only hands it the box geometry (via volumeCtxRef) so a step change never tears the
+    // renderer / scene / camera down.
     const dataGroup = new THREE.Group()
     scene.add(dataGroup)
-
-    // Retry once on a transient failure (the 2-worker backend 502s under load) before showing
-    // the error state.
-    async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
-      try { return await fn() }
-      catch (e: any) {
-        if (disposed || e?.name === 'AbortError') throw e
-        await new Promise(r => setTimeout(r, 1500))
-        return await fn()
-      }
+    volumeCtxRef.current = {
+      dataGroup, worldToUnit, unitToWorld, lonW, latW, depthWorld,
+      setDepthTicks, mesh: null, alive,
     }
-
-    ;(async () => {
-      try {
-        if (mode === 'volume') {
-          const { header, data } = await withRetry(() => fetchVolume(
-            { source: activeSourceId, var: activeVar, time: activeTimeIdx, bbox },
-            abort.signal,
-          ))
-          if (disposed) return
-          const [depthSize, latSize, lonSize] = header.shape
-
-          const texture = new THREE.Data3DTexture(data, lonSize, latSize, depthSize)
-          texture.format = THREE.RedFormat
-          texture.type = THREE.FloatType
-          // NearestFilter: linear on a float texture needs OES_texture_float_linear (see VolumeLayer).
-          texture.minFilter = THREE.NearestFilter
-          texture.magFilter = THREE.NearestFilter
-          texture.unpackAlignment = 1
-          texture.needsUpdate = true
-
-          // Auto-contrast-stretch to the fetched data's real range — see dataStats.ts. Drives
-          // both the shader and the reused <Legend/> (via the store's colormap min/max).
-          const [dataMin, dataMax] = computeDataRange(
-            data, header.missing_value, header.valid_min, header.valid_max,
-          )
-          setColormap({ min: dataMin, max: dataMax })
-
-          const material = new THREE.ShaderMaterial({
-            vertexShader: volumeVertShader,
-            fragmentShader: workspaceVolumeFrag,
-            uniforms: {
-              u_data: { value: texture },
-              u_worldToUnit: { value: worldToUnit },
-              u_clim: { value: new THREE.Vector2(dataMin, dataMax) },
-              u_opacity: { value: 0.9 },
-              u_missing: { value: header.missing_value ?? -9999.0 },
-              u_colormap: { value: COLORMAP_INDEX[colormapName] ?? 0 },
-              u_log_scale: { value: colormapLog ? 1 : 0 },
-              u_lat_flip: { value: LAT_FLIP ? 1 : 0 },
-            },
-            transparent: true,
-            side: THREE.DoubleSide,
-            depthWrite: false,
-            glslVersion: THREE.GLSL3,
-          })
-
-          const geometry = new THREE.BoxGeometry(lonW, depthWorld, latW)
-          geometry.translate(0, -depthWorld / 2, 0)
-          const mesh = new THREE.Mesh(geometry, material)
-          mesh.frustumCulled = false
-          mesh.renderOrder = 3
-          dataGroup.add(mesh)
-          if (header.depth_levels?.length) setDepthTicks(Math.max(...header.depth_levels))
-          setStatus('ready')
-        } else {
-          const { header, verts, faces } = await withRetry(() => fetchIsosurface(
-            { source: activeSourceId, var: activeVar, threshold: isoThreshold, time: activeTimeIdx, bbox },
-            abort.signal,
-          ))
-          if (disposed) return
-          if (header.n_verts === 0 || verts.length === 0) {
-            setStatus('empty')
-            return
-          }
-
-          // fetchIsosurface() verts are marching-cubes voxel indices in (depth, lat, lon) order,
-          // each in [0, size-1]. Normalise to a [0,1] grid fraction, then run through the SAME
-          // unitToWorld the volume shader and markers use. Depth uses the index fraction (not a
-          // metre value) so the surface lines up with the volume raymarch, which is also
-          // index-parametrised. `verts` is the shared fetch buffer — read only, never mutate it
-          // (IsosurfaceLayer copies before its own geometry.translate() for the same reason).
-          const [depthSize, latSize, lonSize] = header.volume_shape
-          const positions = new Float32Array(verts.length)
-          const v = new THREE.Vector3()
-          for (let i = 0; i < verts.length; i += 3) {
-            const lonFrac = lonSize > 1 ? verts[i + 2] / (lonSize - 1) : 0.5
-            let latFrac = latSize > 1 ? verts[i + 1] / (latSize - 1) : 0.5
-            if (LAT_FLIP) latFrac = 1 - latFrac
-            const depthFrac = depthSize > 1 ? verts[i] / (depthSize - 1) : 0
-            v.set(lonFrac, latFrac, depthFrac).applyMatrix4(unitToWorld)
-            positions[i] = v.x
-            positions[i + 1] = v.y
-            positions[i + 2] = v.z
-          }
-
-          const geometry = new THREE.BufferGeometry()
-          geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-          geometry.setIndex(new THREE.BufferAttribute(faces, 1))
-          geometry.computeVertexNormals()
-
-          const material = new THREE.MeshPhongMaterial({
-            color: 0x00d4ff, side: THREE.DoubleSide, transparent: true, opacity: 0.85, shininess: 60,
-          })
-          const mesh = new THREE.Mesh(geometry, material)
-          mesh.frustumCulled = false
-          dataGroup.add(mesh)
-          if (header.depth_levels?.length) setDepthTicks(Math.max(...header.depth_levels))
-          setStatus('ready')
-        }
-      } catch (err: any) {
-        if (disposed || err?.name === 'AbortError') return
-        console.error(err)
-        setErrMsg(err?.message ?? String(err))
-        setStatus('error')
-      }
-    })()
 
     // ── Click-to-inspect: same pipeline the globe uses ─────────────────────
     const raycaster = new THREE.Raycaster()
@@ -502,8 +457,9 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
     animate()
 
     return () => {
-      disposed = true
-      abort.abort()
+      alive.v = false
+      overlayCtxRef.current = null
+      volumeCtxRef.current = null
       cancelAnimationFrame(rafId)
       ro.disconnect()
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
@@ -523,10 +479,322 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
       renderer.dispose()
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
+    // NOTE: deliberately does NOT depend on activeTimeIdx / colormap — only things that change
+    // the box geometry or camera. Data + time steps live in the effect below.
+  }, [mode, bbox, depthLevels, verticalExaggeration, setSelectedPlatform])
+
+  // ── Data mesh + time-step swaps ───────────────────────────────────────────
+  // Keyed on the data params (NOT the scene). A time step is a Data3DTexture swap inside the
+  // existing mesh — cache hit ⇒ instant, no scene rebuild, no loading screen — which is what
+  // makes ▶ playback smooth. Colormap changes just poke uniforms. Isosurface rebuilds its mesh
+  // each change (threshold-driven, no time cache).
+  useEffect(() => {
+    const ctx = volumeCtxRef.current
+    if (!ctx) return
+    const { dataGroup, worldToUnit, unitToWorld, lonW, latW, depthWorld, setDepthTicks } = ctx
+    let cancelled = false
+    const abort = new AbortController()
+
+    const disposeMesh = () => {
+      if (!ctx.mesh) return
+      dataGroup.remove(ctx.mesh)
+      ctx.mesh.geometry.dispose()
+      const mat = ctx.mesh.material as THREE.Material & { uniforms?: any }
+      if (mat.uniforms?.u_data?.value?.dispose) mat.uniforms.u_data.value.dispose()
+      mat.dispose()
+      ctx.mesh = null
+    }
+
+    const applyVolFrame = (frame: VolFrame) => {
+      if (cancelled || !ctx.alive.v) return
+      const [depthSize, latSize, lonSize] = frame.header.shape
+      const [dataMin, dataMax] = computeDataRange(
+        frame.data, frame.header.missing_value, frame.header.valid_min, frame.header.valid_max,
+      )
+      setColormap({ min: dataMin, max: dataMax })
+
+      const tex = new THREE.Data3DTexture(frame.data, lonSize, latSize, depthSize)
+      tex.format = THREE.RedFormat
+      tex.type = THREE.FloatType
+      tex.minFilter = THREE.NearestFilter
+      tex.magFilter = THREE.NearestFilter
+      tex.unpackAlignment = 1
+      tex.needsUpdate = true
+
+      const existing = ctx.mesh?.material as (THREE.ShaderMaterial & { uniforms?: any }) | undefined
+      if (existing?.uniforms?.u_data) {
+        const u = existing.uniforms
+        const old = u.u_data.value as THREE.Data3DTexture
+        u.u_data.value = tex
+        old?.dispose?.()
+        ;(u.u_clim.value as THREE.Vector2).set(dataMin, dataMax)
+        u.u_missing.value = frame.header.missing_value ?? -9999.0
+        u.u_colormap.value = COLORMAP_INDEX[colormapName] ?? 0
+        u.u_log_scale.value = colormapLog ? 1 : 0
+      } else {
+        disposeMesh()
+        const material = new THREE.ShaderMaterial({
+          vertexShader: volumeVertShader,
+          fragmentShader: workspaceVolumeFrag,
+          uniforms: {
+            u_data: { value: tex },
+            u_worldToUnit: { value: worldToUnit },
+            u_clim: { value: new THREE.Vector2(dataMin, dataMax) },
+            u_opacity: { value: 0.9 },
+            u_missing: { value: frame.header.missing_value ?? -9999.0 },
+            u_colormap: { value: COLORMAP_INDEX[colormapName] ?? 0 },
+            u_log_scale: { value: colormapLog ? 1 : 0 },
+            u_lat_flip: { value: LAT_FLIP ? 1 : 0 },
+          },
+          transparent: true,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          glslVersion: THREE.GLSL3,
+        })
+        const geometry = new THREE.BoxGeometry(lonW, depthWorld, latW)
+        geometry.translate(0, -depthWorld / 2, 0)
+        const mesh = new THREE.Mesh(geometry, material)
+        mesh.frustumCulled = false
+        mesh.renderOrder = 3
+        dataGroup.add(mesh)
+        ctx.mesh = mesh
+      }
+      if (frame.header.depth_levels?.length) setDepthTicks(Math.max(...frame.header.depth_levels))
+      setStatus('ready')
+      setStepping(false)
+    }
+
+    if (mode === 'volume') {
+      const key = `${volCacheTag(activeSourceId, activeVar, bbox)}#${activeTimeIdx}`
+      const cached = _volCache.get(key)
+      if (cached) {
+        applyVolFrame(cached)
+      } else {
+        if (ctx.mesh) setStepping(true); else setStatus('loading')
+        setErrMsg(null)
+        fetchVolume({ source: activeSourceId, var: activeVar, time: activeTimeIdx, bbox }, abort.signal)
+          .then(({ header, data }) => {
+            if (cancelled || !ctx.alive.v) return
+            const frame: VolFrame = { header, data: data as Float32Array }
+            _volCachePut(key, frame)
+            applyVolFrame(frame)
+          })
+          .catch((err: any) => {
+            if (cancelled || err?.name === 'AbortError') return
+            console.error(err)
+            setErrMsg(err?.message ?? String(err))
+            setStatus('error')
+            setStepping(false)
+          })
+      }
+    } else {
+      if (ctx.mesh) setStepping(true); else setStatus('loading')
+      setErrMsg(null)
+      fetchIsosurface(
+        { source: activeSourceId, var: activeVar, threshold: isoThreshold, time: activeTimeIdx, bbox },
+        abort.signal,
+      )
+        .then(({ header, verts, faces }) => {
+          if (cancelled || !ctx.alive.v) return
+          disposeMesh()
+          if (header.n_verts === 0 || verts.length === 0) { setStatus('empty'); setStepping(false); return }
+          const [depthSize, latSize, lonSize] = header.volume_shape
+          const positions = new Float32Array(verts.length)
+          const vv = new THREE.Vector3()
+          for (let i = 0; i < verts.length; i += 3) {
+            const lonFrac = lonSize > 1 ? verts[i + 2] / (lonSize - 1) : 0.5
+            let latFrac = latSize > 1 ? verts[i + 1] / (latSize - 1) : 0.5
+            if (LAT_FLIP) latFrac = 1 - latFrac
+            const depthFrac = depthSize > 1 ? verts[i] / (depthSize - 1) : 0
+            vv.set(lonFrac, latFrac, depthFrac).applyMatrix4(unitToWorld)
+            positions[i] = vv.x; positions[i + 1] = vv.y; positions[i + 2] = vv.z
+          }
+          const geometry = new THREE.BufferGeometry()
+          geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+          geometry.setIndex(new THREE.BufferAttribute(faces, 1))
+          geometry.computeVertexNormals()
+          const material = new THREE.MeshPhongMaterial({
+            color: 0x00d4ff, side: THREE.DoubleSide, transparent: true, opacity: 0.85, shininess: 60,
+          })
+          const mesh = new THREE.Mesh(geometry, material)
+          mesh.frustumCulled = false
+          dataGroup.add(mesh)
+          ctx.mesh = mesh
+          if (header.depth_levels?.length) setDepthTicks(Math.max(...header.depth_levels))
+          setStatus('ready')
+          setStepping(false)
+        })
+        .catch((err: any) => {
+          if (cancelled || err?.name === 'AbortError') return
+          console.error(err)
+          setErrMsg(err?.message ?? String(err))
+          setStatus('error')
+          setStepping(false)
+        })
+    }
+
+    return () => { cancelled = true; abort.abort() }
+    // depthLevels / verticalExaggeration are here because the scene effect rebuilds the box (and
+    // resets volumeCtxRef) when they change — the data mesh must then be rebuilt into the new box.
   }, [
-    mode, bbox, activeSourceId, activeVar, activeTimeIdx, isoThreshold, depthLevels,
-    colormapName, colormapLog, verticalExaggeration, setSelectedPlatform, setColormap,
+    mode, bbox, activeSourceId, activeVar, activeTimeIdx, isoThreshold,
+    colormapName, colormapLog, depthLevels, verticalExaggeration, setColormap,
   ])
+
+  // ── Background prefetch of every time step (volume mode) ───────────────────
+  // Keyed on the region/variable only (NOT time), so it survives a play-through: each frame it
+  // fetches lands in _volCache and the data effect's next step swap is a cache hit.
+  useEffect(() => {
+    if (mode !== 'volume' || timeSteps.length < 2) return
+    const ctx = volumeCtxRef.current
+    if (!ctx) return
+    const tag = volCacheTag(activeSourceId, activeVar, bbox)
+    const abort = new AbortController()
+    let cancelled = false
+    ;(async () => {
+      for (let t = 0; t < timeSteps.length; t++) {
+        if (cancelled || !ctx.alive.v) return
+        const k = `${tag}#${t}`
+        if (_volCache.has(k)) continue
+        try {
+          const { header, data } = await fetchVolume(
+            { source: activeSourceId, var: activeVar, time: t, bbox }, abort.signal,
+          )
+          if (cancelled || !ctx.alive.v) return
+          _volCachePut(k, { header, data: data as Float32Array })
+        } catch { /* transient — the on-demand fetch in the data effect will retry this step */ }
+      }
+    })()
+    return () => { cancelled = true; abort.abort() }
+  }, [mode, activeSourceId, activeVar, bbox, timeSteps.length])
+
+  // ── Surface overlays (markers / eddies / fronts / vectors) ─────────────────
+  // Separate from the scene effect so toggling a layer never rebuilds the volume. Rebuilds the
+  // overlay group in place whenever the box is (re)built or a relevant store field changes.
+  useEffect(() => {
+    const ctx = overlayCtxRef.current
+    if (!ctx) return
+    const { project, kmToWorld, overlayGroup, markerMeshes, markerIds } = ctx
+
+    // Clear the previous overlays.
+    for (const child of [...overlayGroup.children]) {
+      overlayGroup.remove(child)
+      const m = child as THREE.Mesh
+      m.geometry?.dispose?.()
+      const mat = (m as any).material
+      if (Array.isArray(mat)) mat.forEach((x: THREE.Material) => x.dispose())
+      else mat?.dispose?.()
+    }
+    markerMeshes.length = 0
+    markerIds.clear()
+
+    const abort = new AbortController()
+    const lv = layerVisibility
+    const HOVER = 0.28
+    const overlayMat = (color: number, extra: THREE.MeshBasicMaterialParameters = {}) =>
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthTest: false, ...extra })
+
+    if (lv.markers) {
+      fetchInstruments({ bbox }, abort.signal)
+        .then(({ instruments }) => {
+          if (!ctx.alive.v || abort.signal.aborted) return
+          for (const inst of instruments) {
+            const color = markerColorHex(inst.type)
+            const marker = new THREE.Mesh(
+              new THREE.SphereGeometry(0.17, 16, 16),
+              new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.35 }),
+            )
+            marker.position.copy(project(inst.lon, inst.lat, 0))
+            overlayGroup.add(marker)
+            markerMeshes.push(marker)
+            markerIds.set(marker, inst.platform_id)
+          }
+        })
+        .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
+    }
+
+    if (lv.eddy) {
+      fetchEddyDetection({ source: ctx.currentSource, time: activeTimeIdx, bbox }, abort.signal)
+        .then(cells => {
+          if (!ctx.alive.v || abort.signal.aborted) return
+          for (const c of cells) {
+            const r = Math.max(0.4, (c.radius_km ?? 60) * kmToWorld * 1.4)
+            const col = c.type === 'warm' ? 0xff8c00 : 0x00e5ff
+            const ring = new THREE.Mesh(
+              new THREE.TorusGeometry(r, Math.max(0.07, r * 0.12), 12, 44),
+              overlayMat(col, { side: THREE.DoubleSide }),
+            )
+            ring.rotation.x = -Math.PI / 2
+            ring.position.copy(project(c.lon, c.lat, 0)).setY(HOVER + 0.15)
+            ring.renderOrder = 5
+            overlayGroup.add(ring)
+          }
+        })
+        .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
+    }
+
+    if (lv.fronts && activeVar) {
+      fetchFrontDetection(
+        { source: activeSourceId, var: activeVar, time: activeTimeIdx, bbox }, abort.signal,
+      )
+        .then(cells => {
+          if (!ctx.alive.v || abort.signal.aborted || cells.length === 0) return
+          const stride = Math.max(1, Math.ceil(cells.length / 500))
+          const shown = cells.filter((_, i) => i % stride === 0)
+          const pos = new Float32Array(shown.length * 3)
+          shown.forEach((c, i) => {
+            const p = project(c.lon, c.lat, 0)
+            pos[i * 3] = p.x; pos[i * 3 + 1] = HOVER; pos[i * 3 + 2] = p.z
+          })
+          const geo = new THREE.BufferGeometry()
+          geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+          const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+            color: 0xff3df5, size: 0.24, transparent: true, opacity: 0.95, depthTest: false,
+          }))
+          pts.renderOrder = 5
+          overlayGroup.add(pts)
+        })
+        .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
+    }
+
+    if (lv.vectors) {
+      Promise.all([
+        fetchSlice({ source: ctx.currentSource, var: 'uo', depth: 0, time: activeTimeIdx, bbox }, abort.signal),
+        fetchSlice({ source: ctx.currentSource, var: 'vo', depth: 0, time: activeTimeIdx, bbox }, abort.signal),
+      ])
+        .then(([uR, vR]) => {
+          if (!ctx.alive.v || abort.signal.aborted) return
+          const [latN, lonN] = uR.header.shape
+          const u = uR.data, v = vR.data
+          const { lon: [loA, loB], lat: [laA, laB] } = uR.header.bounds
+          const stepJ = Math.max(1, Math.ceil(lonN / 16))
+          const stepI = Math.max(1, Math.ceil(latN / 16))
+          const arrowGeo = new THREE.ConeGeometry(0.09, 0.5, 6)
+          const arrowMat = overlayMat(0x00e5ff)
+          const up = new THREE.Vector3(0, 1, 0)
+          for (let i = 0; i < latN; i += stepI) {
+            for (let j = 0; j < lonN; j += stepJ) {
+              const uu = u[i * lonN + j], vv = v[i * lonN + j]
+              const spd = Math.hypot(uu, vv)
+              if (!isFinite(spd) || spd < 1e-3 || spd > 50) continue
+              const lon = loA + (loB - loA) * (j / (lonN - 1))
+              const lat = laA + (laB - laA) * (i / (latN - 1))
+              const a = new THREE.Mesh(arrowGeo, arrowMat)
+              a.position.copy(project(lon, lat, 0)).setY(HOVER)
+              a.quaternion.setFromUnitVectors(up, new THREE.Vector3(uu, 0, -vv).normalize())
+              a.scale.setY(Math.min(0.6 + spd * 2.5, 2.6))
+              a.renderOrder = 5
+              overlayGroup.add(a)
+            }
+          }
+        })
+        .catch(err => { if (err?.name !== 'AbortError') console.error(err) })
+    }
+
+    return () => { abort.abort() }
+    // Same "heavy" deps as the scene effect (which runs first and refreshes overlayCtxRef) PLUS
+    // layerVisibility — so a layer toggle rebuilds only the overlays, a data change rebuilds both.
+  }, [mode, bbox, activeSourceId, activeVar, activeTimeIdx, isoThreshold, verticalExaggeration, depthLevels, layerVisibility])
 
   return (
     <div style={{ ...styles.overlay, opacity: entered ? 1 : 0 }}>
@@ -548,6 +816,62 @@ export function VolumeIsoWorkspace({ mode, onClose }: VolumeIsoWorkspaceProps) {
 
         <div style={styles.body}>
           <div ref={mountRef} style={styles.canvasHost} />
+
+          <div style={styles.layersHost}>
+            <div style={styles.layersTitle}>Layers in view</div>
+            {([
+              ['markers', 'Instruments'],
+              ['eddy', 'Eddies'],
+              ['fronts', 'Thermal Fronts'],
+              ['vectors', 'Current Vectors'],
+            ] as const).map(([id, label]) => (
+              <label key={id} style={styles.layerRow}>
+                <input
+                  type="checkbox"
+                  checked={!!layerVisibility[id]}
+                  onChange={() => toggleLayer(id)}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+
+          {(status === 'ready' || stepping) && timeSteps.length > 1 && (
+            <div style={styles.timeHost}>
+              <div style={styles.layersTitle}>Time step</div>
+              <div style={styles.timeValue}>{timeSteps[activeTimeIdx] ?? `T+${activeTimeIdx}`}</div>
+              <div style={styles.timeMeta}>
+                {activeTimeIdx + 1} / {timeSteps.length}
+                {stepping
+                  ? ' · loading…'
+                  : cachedFrames < timeSteps.length
+                    ? ` · buffering ${cachedFrames}/${timeSteps.length}`
+                    : ' · buffered'}
+              </div>
+              <div style={styles.timeControls}>
+                <button
+                  style={styles.timeBtn}
+                  onClick={() => setIsPlaying(p => !p)}
+                  title={isPlaying ? 'Pause' : 'Play through time'}
+                >
+                  {isPlaying ? '⏸' : '▶'}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={timeSteps.length - 1}
+                  step={1}
+                  value={activeTimeIdx}
+                  onChange={e => setActiveTimeIdx(Number(e.target.value))}
+                  style={styles.timeSlider}
+                />
+              </div>
+              <div style={styles.timeEnds}>
+                <span>{timeSteps[0]}</span>
+                <span>{timeSteps[timeSteps.length - 1]}</span>
+              </div>
+            </div>
+          )}
 
           {status === 'loading' && (
             <div style={styles.overlayMsg}>
@@ -627,6 +951,76 @@ const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, position: 'relative', minHeight: 0 },
   canvasHost: { position: 'absolute', inset: 0 },
   legendHost: { position: 'absolute', left: 0, bottom: 0 },
+  layersHost: {
+    position: 'absolute',
+    left: '20px',
+    top: '20px',
+    zIndex: 20,
+    pointerEvents: 'auto',
+    padding: '12px 14px',
+    background: 'rgba(8, 15, 30, 0.82)',
+    backdropFilter: 'blur(12px)',
+    border: '1px solid rgba(0, 180, 255, 0.3)',
+    borderRadius: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '7px',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+    fontFamily: "'Inter', sans-serif",
+  },
+  layersTitle: {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#00d4ff',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+    marginBottom: '2px',
+  },
+  layerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.85)',
+    cursor: 'pointer',
+  },
+  timeHost: {
+    position: 'absolute',
+    right: '20px',
+    top: '20px',
+    zIndex: 20,
+    pointerEvents: 'auto',
+    width: '210px',
+    padding: '12px 14px',
+    background: 'rgba(8, 15, 30, 0.82)',
+    backdropFilter: 'blur(12px)',
+    border: '1px solid rgba(0, 180, 255, 0.3)',
+    borderRadius: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+    fontFamily: "'Inter', sans-serif",
+  },
+  timeValue: { fontSize: '15px', fontWeight: 700, color: '#e0f0ff' },
+  timeMeta: { fontSize: '11px', color: 'rgba(160, 196, 232, 0.7)' },
+  timeControls: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' },
+  timeBtn: {
+    padding: '2px 9px',
+    background: 'rgba(0, 180, 255, 0.14)',
+    border: '1px solid rgba(0, 180, 255, 0.35)',
+    borderRadius: '6px',
+    color: '#00d4ff',
+    cursor: 'pointer',
+    fontSize: '13px',
+  },
+  timeSlider: { flex: 1, accentColor: '#00d4ff' },
+  timeEnds: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: '10px',
+    color: 'rgba(160, 196, 232, 0.6)',
+  },
   overlayMsg: {
     position: 'absolute',
     top: '50%',

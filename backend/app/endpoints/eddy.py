@@ -10,6 +10,12 @@ from fastapi.responses import JSONResponse
 import numpy as np
 
 from backend.app.endpoints.binary import parse_bbox
+# netCDF4/HDF5 isn't thread-safe for concurrent access to the process-wide cached file handle
+# (see the long note on _NETCDF_IO_LOCK in netcdf_adapter). get_slice/get_volume already hold it;
+# eddy/front open + read the same files in their own executor thread, so without taking the same
+# lock a Volume-workspace burst (volume + slice + eddy + front all at once) raises "NetCDF: HDF
+# error". Reuse the adapter's lock so all NetCDF I/O in the process serialises through one gate.
+from backend.app.adapters.netcdf_adapter import _NETCDF_IO_LOCK
 
 logger = logging.getLogger("tarang.endpoint.eddy")
 router = APIRouter(tags=["analytics"])
@@ -53,35 +59,38 @@ async def get_eddy(
         raise HTTPException(400, str(e))
 
     def compute():
-        ds = adapter.open(bbox_tuple)
         min_lon, min_lat, max_lon, max_lat = bbox_tuple
-        
-        lat_dim = "latitude" if "latitude" in ds.dims else "lat"
-        lon_dim = "longitude" if "longitude" in ds.dims else "lon"
-        
-        subset = ds.sel(**{
-            lat_dim: slice(min_lat, max_lat),
-            lon_dim: slice(min_lon, max_lon),
-        })
-        
-        if "time" in subset.dims:
-            subset = subset.isel(time=min(time, subset.sizes["time"] - 1))
-            
-        if "depth" in subset.dims or "lev" in subset.dims:
-            depth_dim = "depth" if "depth" in subset.dims else "lev"
-            subset = subset.isel(**{depth_dim: 0})
 
-        uv = _find_uv(subset.data_vars)
-        if uv is None:
-            raise ValueError(
-                f"Source '{source}' has no current-velocity variables "
-                f"(need one of {[p[0] for p in _UV_PAIRS]}) — pick a currents source for eddies"
-            )
-        u = subset[uv[0]].values.astype(np.float64)
-        v = subset[uv[1]].values.astype(np.float64)
+        # adapter.open() locks _NETCDF_IO_LOCK internally for the file open (and the lock is NOT
+        # reentrant) - so open OUTSIDE the lock, then take it only for the subset + .values read.
+        ds = adapter.open(bbox_tuple)
+        with _NETCDF_IO_LOCK:
+            lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+            lon_dim = "longitude" if "longitude" in ds.dims else "lon"
 
-        lats = subset[lat_dim].values.astype(np.float64)
-        lons = subset[lon_dim].values.astype(np.float64)
+            subset = ds.sel(**{
+                lat_dim: slice(min_lat, max_lat),
+                lon_dim: slice(min_lon, max_lon),
+            })
+
+            if "time" in subset.dims:
+                subset = subset.isel(time=min(time, subset.sizes["time"] - 1))
+
+            if "depth" in subset.dims or "lev" in subset.dims:
+                depth_dim = "depth" if "depth" in subset.dims else "lev"
+                subset = subset.isel(**{depth_dim: 0})
+
+            uv = _find_uv(subset.data_vars)
+            if uv is None:
+                raise ValueError(
+                    f"Source '{source}' has no current-velocity variables "
+                    f"(need one of {[p[0] for p in _UV_PAIRS]}) — pick a currents source for eddies"
+                )
+            u = subset[uv[0]].values.astype(np.float64)
+            v = subset[uv[1]].values.astype(np.float64)
+
+            lats = subset[lat_dim].values.astype(np.float64)
+            lons = subset[lon_dim].values.astype(np.float64)
 
         if lats.size < 3 or lons.size < 3:
             return []   # this source doesn't cover the requested bbox — no eddies, not an error
@@ -188,31 +197,34 @@ async def get_front(
         raise HTTPException(400, str(e))
 
     def compute():
-        ds = adapter.open(bbox_tuple)
         min_lon, min_lat, max_lon, max_lat = bbox_tuple
-        
-        lat_dim = "latitude" if "latitude" in ds.dims else "lat"
-        lon_dim = "longitude" if "longitude" in ds.dims else "lon"
-        
-        subset = ds.sel(**{
-            lat_dim: slice(min_lat, max_lat),
-            lon_dim: slice(min_lon, max_lon),
-        })
-        
-        if "time" in subset.dims:
-            subset = subset.isel(time=min(time, subset.sizes["time"] - 1))
-            
-        if "depth" in subset.dims or "lev" in subset.dims:
-            depth_dim = "depth" if "depth" in subset.dims else "lev"
-            subset = subset.isel(**{depth_dim: 0})
 
-        if var not in subset.data_vars:
-            raise ValueError(f"Source '{source}' is missing variable '{var}'")
+        # adapter.open() locks _NETCDF_IO_LOCK internally for the file open (and the lock is NOT
+        # reentrant) - so open OUTSIDE the lock, then take it only for the subset + .values read.
+        ds = adapter.open(bbox_tuple)
+        with _NETCDF_IO_LOCK:
+            lat_dim = "latitude" if "latitude" in ds.dims else "lat"
+            lon_dim = "longitude" if "longitude" in ds.dims else "lon"
 
-        data = subset[var].values.astype(np.float64)
+            subset = ds.sel(**{
+                lat_dim: slice(min_lat, max_lat),
+                lon_dim: slice(min_lon, max_lon),
+            })
 
-        lats = subset[lat_dim].values.astype(np.float64)
-        lons = subset[lon_dim].values.astype(np.float64)
+            if "time" in subset.dims:
+                subset = subset.isel(time=min(time, subset.sizes["time"] - 1))
+
+            if "depth" in subset.dims or "lev" in subset.dims:
+                depth_dim = "depth" if "depth" in subset.dims else "lev"
+                subset = subset.isel(**{depth_dim: 0})
+
+            if var not in subset.data_vars:
+                raise ValueError(f"Source '{source}' is missing variable '{var}'")
+
+            data = subset[var].values.astype(np.float64)
+
+            lats = subset[lat_dim].values.astype(np.float64)
+            lons = subset[lon_dim].values.astype(np.float64)
 
         if lats.size < 3 or lons.size < 3:
             return []
